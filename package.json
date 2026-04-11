@@ -1,0 +1,66 @@
+{
+  "name": "gestionaverias",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "build:web": "npx expo export --platform web",
+    "eas:login": "cross-env EAS_NO_VCS=1 npx eas-cli login",
+    "eas:whoami": "cross-env EAS_NO_VCS=1 npx eas-cli whoami",
+    "build:android:preview": "cross-env EAS_NO_VCS=1 npx eas-cli build -p android --profile preview",
+    "build:android:production": "cross-env EAS_NO_VCS=1 npx eas-cli build -p android --profile production",
+    "build:android:local-apk": "cross-env EAS_NO_VCS=1 npx eas-cli build -p android --profile preview --local",
+    "electron:dev": "npx expo start --web & npx electron electron/main.js --dev",
+    "electron:build": "npx expo export --platform web && npx electron-builder --dir --win",
+    "electron:build-installer": "npx expo export --platform web && npx electron-builder --win",
+    "electron": "npx electron electron/main.js --dev"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "~6.1.2",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-community/datetimepicker": "^9.1.0",
+    "expo": "~54.0.33",
+    "expo-auth-session": "~7.0.10",
+    "expo-crypto": "~15.0.8",
+    "expo-document-picker": "~14.0.8",
+    "expo-file-system": "~19.0.21",
+    "expo-sharing": "~14.0.8",
+    "expo-status-bar": "~3.0.9",
+    "expo-web-browser": "~15.0.10",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-svg": "15.12.1",
+    "react-native-web": "^0.21.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/react": "~19.1.0",
+    "cross-env": "^10.1.0",
+    "electron": "^41.2.0",
+    "electron-builder": "^26.8.1",
+    "typescript": "~5.9.2"
+  },
+  "private": true,
+  "build": {
+    "appId": "com.gestionaverias.app",
+    "productName": "Gestion de Averias",
+    "directories": {
+      "output": "electron-dist"
+    },
+    "files": [
+      "electron/**/*",
+      "assets/**/*",
+      "dist/**/*"
+    ],
+    "extraMetadata": {
+      "main": "electron/main.js"
+    },
+    "win": {
+      "target": "dir"
+    }
+  }
+}
