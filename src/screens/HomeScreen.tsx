@@ -1,22 +1,25 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import { View, StyleSheet, Alert, Platform } from 'react-native';
+import { View, StyleSheet, Alert, Platform, BackHandler, Pressable, Text, useWindowDimensions } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
 import * as LegacyFileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
-import { AveriaTable } from '../components/AveriaTable';
 import { AveriaFormModal } from '../components/AveriaFormModal';
-import { HeaderBar } from '../components/HeaderBar';
-import {
-  DateSortOrder,
-  FilterBar,
-  SolucionadoFilter,
-} from '../components/FilterBar';
-import { TabPills } from '../components/TabPills';
+import { DateSortOrder, SolucionadoFilter } from '../components/FilterBar';
 import { KPIDashboard } from '../components/KPIDashboard';
 import { AveriasMapView } from '../components/AveriasMapView';
 import { ImportSourceModal } from '../components/ImportSourceModal';
 import { DriveFilePickerModal } from '../components/DriveFilePickerModal';
 import { useAverias } from '../hooks/useAverias';
+import { BottomNavBar, DESKTOP_BREAKPOINT, SectionKey } from '../navigation/BottomNavBar';
+import { DashboardScreen } from './DashboardScreen';
+import { FaultsScreen } from './FaultsScreen';
+import { AssistantScreen } from './AssistantScreen';
+import { MoreAction, MoreScreen } from './MoreScreen';
+import { SettingsScreen } from './SettingsScreen';
+import { useI18n } from '../i18n/useI18n';
+import { confirmAction } from '../utils/dialogs';
 import { useGoogleAuth } from '../hooks/useGoogleAuth';
 import { parseExcelBuffer, exportToExcelBuffer } from '../services/excelService';
 import {
@@ -38,11 +41,13 @@ import {
 } from '../services/googleDriveService';
 import { hydrateAveriasLocations } from '../services/geocodingService';
 import { Averia, AveriaFormData, getAveriaPhotos } from '../types/averia';
-import { COLORS } from '../constants/theme';
+import { Palette } from '../theme/palettes';
+import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 import { parseDate } from '../utils/dateUtils';
 
-export function HomeScreen() {
-  const { averias, cloudSyncError, addAveria, updateAveria, deleteAveria, setAverias, clearAverias } =
+export function HomeScreen({ onReady }: { onReady?: () => void }) {
+  const styles = useThemedStyles(createStyles);
+  const { averias, isLoaded, cloudSyncError, addAveria, updateAveria, deleteAveria, setAverias, clearAverias } =
     useAverias();
 
   const {
@@ -63,7 +68,17 @@ export function HomeScreen() {
   const [solucionadoFilter, setSolucionadoFilter] = useState<SolucionadoFilter>('todos');
   const [dateSortOrder, setDateSortOrder] = useState<DateSortOrder>('desc');
   const [customIntervencionTypes, setCustomIntervencionTypes] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState('datos');
+  useEffect(() => {
+    if (isLoaded) onReady?.();
+  }, [isLoaded, onReady]);
+
+  const [section, setSection] = useState<SectionKey>('home');
+  const [moreRoute, setMoreRoute] = useState<'menu' | 'kpis' | 'settings'>('menu');
+  const { colors } = useTheme();
+  const { t } = useI18n();
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= DESKTOP_BREAKPOINT;
 
   // Load custom intervención types on mount
   useEffect(() => {
@@ -188,7 +203,7 @@ export function HomeScreen() {
     }
 
     setSearchText(bastidor);
-    setActiveTab('datos');
+    setSection('faults');
   }, []);
 
   const handleAddAveria = useCallback(() => {
@@ -458,58 +473,142 @@ export function HomeScreen() {
     }
   }, [averias]);
 
-  return (
-    <View style={styles.container}>
-      <HeaderBar
-        totalAverias={averias.length}
-        onAddAveria={handleAddAveria}
-        onImportExcel={handleOpenImportModal}
-        onExportExcel={handleExportExcel}
-        onNewTemplate={handleNewTemplate}
-        isDriveConnected={isDriveConnected}
-        userEmail={userEmail}
-      />
+  const handleNavChange = useCallback((key: SectionKey) => {
+    setSection(key);
+    if (key === 'more') setMoreRoute('menu');
+  }, []);
 
-      <TabPills
-        tabs={[
-          { key: 'datos', label: '📋 Datos' },
-          { key: 'kpis', label: '📊 KPIs' },
-          { key: 'mapa', label: '🗺️ Mapa' },
-        ]}
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-      />
+  const handleViewAll = useCallback((filter?: 'pending' | 'resolved') => {
+    setSolucionadoFilter(filter === 'pending' ? 'no' : filter === 'resolved' ? 'si' : 'todos');
+    setSearchText('');
+    setSection('faults');
+  }, []);
 
-      {activeTab === 'datos' ? (
-        <>
-          <FilterBar
-            searchText={searchText}
-            onSearchTextChange={setSearchText}
-            solucionadoFilter={solucionadoFilter}
-            onSolucionadoFilterChange={setSolucionadoFilter}
-            dateSortOrder={dateSortOrder}
-            onDateSortOrderChange={setDateSortOrder}
-            resultCount={filteredAverias.length}
-            totalCount={averias.length}
-          />
+  const handleMoreAction = useCallback(
+    (action: MoreAction) => {
+      switch (action) {
+        case 'kpis':
+          setMoreRoute('kpis');
+          break;
+        case 'settings':
+          setMoreRoute('settings');
+          break;
+        case 'templates':
+          handleNewTemplate();
+          break;
+        case 'import':
+          handleOpenImportModal();
+          break;
+        case 'export':
+          void handleExportExcel();
+          break;
+      }
+    },
+    [handleNewTemplate, handleOpenImportModal, handleExportExcel]
+  );
 
-          <View style={styles.tableContainer}>
-            <AveriaTable
-              averias={filteredAverias}
-              onEditAveria={handleEditAveria}
-              onDeleteAveria={handleDeleteAveria}
-              onGenerateReport={handleGenerateReport}
-            />
-          </View>
-        </>
-      ) : activeTab === 'kpis' ? (
-        <KPIDashboard averias={averias} />
-      ) : (
-        <AveriasMapView
+  // Android hardware back: close sub-screen, then return to Home, then default behaviour.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (section === 'more' && moreRoute !== 'menu') {
+        setMoreRoute('menu');
+        return true;
+      }
+      if (section !== 'home') {
+        setSection('home');
+        return true;
+      }
+      return false;
+    });
+    return () => subscription.remove();
+  }, [section, moreRoute]);
+
+  const inSubRoute = section === 'more' && moreRoute !== 'menu';
+  const showNewButton = section === 'home' || section === 'faults' || section === 'map';
+
+  let content: React.ReactNode;
+  switch (section) {
+    case 'home':
+      content = (
+        <DashboardScreen
           averias={averias}
-          onViewRecords={handleViewBastidorRecords}
+          onOpenAveria={handleEditAveria}
+          onNewAveria={handleAddAveria}
+          onViewAll={handleViewAll}
         />
-      )}
+      );
+      break;
+    case 'faults':
+      content = (
+        <FaultsScreen
+          averias={filteredAverias}
+          totalCount={averias.length}
+          searchText={searchText}
+          onSearchTextChange={setSearchText}
+          solucionadoFilter={solucionadoFilter}
+          onSolucionadoFilterChange={setSolucionadoFilter}
+          dateSortOrder={dateSortOrder}
+          onDateSortOrderChange={setDateSortOrder}
+          onEditAveria={handleEditAveria}
+          onDeleteAveria={handleDeleteAveria}
+          onGenerateReport={handleGenerateReport}
+        />
+      );
+      break;
+    case 'map':
+      content = <AveriasMapView averias={averias} onViewRecords={handleViewBastidorRecords} />;
+      break;
+    case 'ai':
+      content = <AssistantScreen averias={averias} onOpenAveria={handleEditAveria} />;
+      break;
+    default:
+      content =
+        moreRoute === 'kpis' ? (
+          <KPIDashboard averias={averias} />
+        ) : moreRoute === 'settings' ? (
+          <SettingsScreen recordCount={averias.length} />
+        ) : (
+          <MoreScreen onAction={handleMoreAction} />
+        );
+  }
+
+  return (
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={styles.topBar}>
+        {inSubRoute ? (
+          <Pressable
+            onPress={() => setMoreRoute('menu')}
+            style={styles.backButton}
+            accessibilityRole="button"
+            accessibilityLabel={t('common_back')}
+          >
+            <Ionicons name="chevron-back" size={24} color={colors.primary} />
+          </Pressable>
+        ) : null}
+        <Text style={styles.topTitle} numberOfLines={1} accessibilityRole="header">
+          {t('appName')}
+        </Text>
+        <Text style={styles.topMeta}>{t('common_records', { count: averias.length })}</Text>
+      </View>
+      {cloudSyncError ? <Text style={styles.syncError}>{cloudSyncError}</Text> : null}
+
+      <View style={styles.content}>
+        {content}
+        {showNewButton && (
+          <Pressable
+            style={[styles.fab, isDesktop && styles.fabDesktop]}
+            onPress={handleAddAveria}
+            accessibilityRole="button"
+            accessibilityLabel={t('nav_new_fault')}
+          >
+            <Ionicons name="add" size={26} color={colors.onPrimary} />
+            {isDesktop && <Text style={styles.fabLabel}>{t('nav_new_fault')}</Text>}
+          </Pressable>
+        )}
+      </View>
+
+      <BottomNavBar active={section} onChange={handleNavChange} />
 
       <AveriaFormModal
         visible={isFormVisible}
@@ -618,13 +717,58 @@ function buildImportSummaryMessage(
   return parts.join(' ');
 }
 
-const styles = StyleSheet.create({
+const createStyles = (COLORS: Palette) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
   },
-  tableContainer: {
+  content: {
     flex: 1,
-    padding: 16,
   },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 52,
+    paddingHorizontal: 16,
+    backgroundColor: COLORS.surface,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  backButton: {
+    width: 44,
+    height: 44,
+    marginLeft: -12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  topTitle: { flex: 1, fontSize: 18, fontWeight: '700', color: COLORS.primary },
+  topMeta: { fontSize: 13, color: COLORS.textSecondary },
+  syncError: {
+    backgroundColor: COLORS.errorSoft,
+    color: COLORS.error,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    fontSize: 13,
+  },
+  fab: {
+    position: 'absolute',
+    right: 16,
+    bottom: 16,
+    minWidth: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: COLORS.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  fabDesktop: { paddingHorizontal: 20, right: 32, bottom: 24 },
+  fabLabel: { color: COLORS.onPrimary, fontWeight: '700', fontSize: 15 },
 });

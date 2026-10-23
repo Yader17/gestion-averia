@@ -1,7 +1,9 @@
 import React, { useCallback, useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
-import { COLORS, FONT_SIZES, SPACING } from '../constants/theme';
+import { FONT_SIZES, SPACING } from '../constants/theme';
+import { Palette } from '../theme/palettes';
+import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 import { Averia } from '../types/averia';
 
 type AveriasMapViewProps = {
@@ -30,10 +32,12 @@ const DEFAULT_CENTER: [number, number] = [40.4168, -3.7038];
 const EXPANSION_RADIUS = 0.00045;
 
 export function AveriasMapView({ averias, onViewRecords }: AveriasMapViewProps) {
+  const styles = useThemedStyles(createStyles);
+  const { isDark } = useTheme();
   const machineMarkers = useMemo(() => buildMachineMarkers(averias), [averias]);
   const markerGroups = useMemo(() => groupMarkersByPoint(machineMarkers), [machineMarkers]);
   const withLocation = machineMarkers.length;
-  const html = useMemo(() => buildMapHtml(markerGroups), [markerGroups]);
+  const html = useMemo(() => buildMapHtml(markerGroups, isDark), [markerGroups, isDark]);
 
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
@@ -132,7 +136,10 @@ function groupMarkersByPoint(markers: MachineMarker[]): MarkerGroup[] {
   }));
 }
 
-function buildMapHtml(markerGroups: MarkerGroup[]): string {
+function buildMapHtml(markerGroups: MarkerGroup[], isDark: boolean): string {
+  const tileUrl = isDark
+    ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+    : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
   const center = markerGroups.length > 0
     ? [markerGroups[0].latitude, markerGroups[0].longitude]
     : DEFAULT_CENTER;
@@ -199,8 +206,8 @@ function buildMapHtml(markerGroups: MarkerGroup[]): string {
           const expansionRadius = ${EXPANSION_RADIUS};
           const map = L.map('map').setView(center, 6);
 
-          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap contributors'
+          L.tileLayer(${JSON.stringify(tileUrl)}, {
+            attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
           }).addTo(map);
 
           function getExpandedPosition(latitude, longitude, index, total) {
@@ -302,7 +309,7 @@ function buildMapHtml(markerGroups: MarkerGroup[]): string {
   `;
 }
 
-const styles = StyleSheet.create({
+const createStyles = (COLORS: Palette) => StyleSheet.create({
   container: {
     flex: 1,
     justifyContent: 'center',

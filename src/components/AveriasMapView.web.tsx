@@ -8,7 +8,9 @@ import {
   Tooltip,
 } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
-import { COLORS, FONT_SIZES, SPACING } from '../constants/theme';
+import { FONT_SIZES, SPACING } from '../constants/theme';
+import { Palette } from '../theme/palettes';
+import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 import { Averia } from '../types/averia';
 
 type AveriasMapViewProps = {
@@ -28,15 +30,17 @@ type MachineMarker = {
 
 const DEFAULT_CENTER: [number, number] = [40.4168, -3.7038];
 const EXPANSION_RADIUS = 0.00045;
-const VIEW_RECORDS_BUTTON_STYLE = {
+const buildViewRecordsButtonStyle = (colors: Palette) => ({
   marginTop: SPACING.sm,
   border: 0,
   borderRadius: 6,
-  backgroundColor: COLORS.primary,
-  color: COLORS.white,
+  backgroundColor: colors.primary,
+  color: colors.onPrimary,
   fontWeight: '700',
   padding: `${SPACING.xs + 2}px ${SPACING.md}px`,
-};
+});
+const LIGHT_TILES = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+const DARK_TILES = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
 const MapContainerCompat = MapContainer as unknown as React.ComponentType<{
   center: [number, number];
   zoom: number;
@@ -76,6 +80,8 @@ const TooltipCompat = Tooltip as unknown as React.ComponentType<{
 }>;
 
 export function AveriasMapView({ averias, onViewRecords }: AveriasMapViewProps) {
+  const styles = useThemedStyles(createStyles);
+  const { colors, isDark } = useTheme();
   const machineMarkers = useMemo(() => buildMachineMarkers(averias), [averias]);
   const groupedByPoint = useMemo(() => groupMarkersByPoint(machineMarkers), [machineMarkers]);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
@@ -110,8 +116,8 @@ export function AveriasMapView({ averias, onViewRecords }: AveriasMapViewProps) 
 
       <MapContainerCompat center={mapCenter} zoom={6} style={styles.map}>
         <TileLayerCompat
-          attribution='&copy; OpenStreetMap contributors'
-          url='https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+          attribution='&copy; OpenStreetMap contributors &copy; CARTO'
+          url={isDark ? DARK_TILES : LIGHT_TILES}
         />
 
         {groupedByPoint.map((group) => {
@@ -190,7 +196,7 @@ export function AveriasMapView({ averias, onViewRecords }: AveriasMapViewProps) 
                     <button
                       type="button"
                       style={{
-                        ...VIEW_RECORDS_BUTTON_STYLE,
+                        ...buildViewRecordsButtonStyle(colors),
                         opacity: canViewRecords ? 1 : 0.55,
                         cursor: canViewRecords ? 'pointer' : 'not-allowed',
                       }}
@@ -276,7 +282,7 @@ function getExpandedPosition(
   return [latitude + latitudeOffset, longitude + longitudeOffset];
 }
 
-const styles = StyleSheet.create({
+const createStyles = (COLORS: Palette) => StyleSheet.create({
   wrapper: {
     flex: 1,
     padding: SPACING.lg,

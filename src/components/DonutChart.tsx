@@ -1,7 +1,9 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import Svg, { Path, G } from 'react-native-svg';
-import { COLORS, SPACING, FONT_SIZES } from '../constants/theme';
+import { SPACING, FONT_SIZES } from '../constants/theme';
+import { Palette } from '../theme/palettes';
+import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 
 type DonutSegment = {
   label: string;
@@ -22,6 +24,7 @@ export function DonutChart({
   strokeWidth = 35,
   title,
 }: DonutChartProps) {
+  const styles = useThemedStyles(createStyles);
   const total = segments.reduce((sum, s) => sum + s.value, 0);
   if (total === 0) {
     return (
@@ -108,7 +111,7 @@ export function DonutChart({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (COLORS: Palette) => StyleSheet.create({
   container: {
     backgroundColor: COLORS.surface,
     borderRadius: 12,

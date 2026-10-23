@@ -7,7 +7,9 @@ import {
   StyleSheet,
   Platform,
 } from 'react-native';
-import { COLORS, SPACING, FONT_SIZES } from '../constants/theme';
+import { SPACING, FONT_SIZES } from '../constants/theme';
+import { Palette } from '../theme/palettes';
+import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 
 type ImportSourceModalProps = {
   visible: boolean;
@@ -24,6 +26,7 @@ export function ImportSourceModal({
   onImportDrive,
   isDriveConnected,
 }: ImportSourceModalProps) {
+  const styles = useThemedStyles(createStyles);
   return (
     <Modal
       visible={visible}
@@ -86,10 +89,10 @@ export function ImportSourceModal({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (COLORS: Palette) => StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: COLORS.overlay,
     justifyContent: 'center',
     alignItems: 'center',
     padding: SPACING.md,
@@ -137,7 +140,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
   },
   driveCard: {
-    borderColor: '#4285F4',
+    borderColor: COLORS.primary,
     borderWidth: 1.5,
   },
   optionIcon: {
@@ -157,7 +160,7 @@ const styles = StyleSheet.create({
   },
   connectBadge: {
     marginTop: SPACING.sm,
-    backgroundColor: '#e8f0fe',
+    backgroundColor: COLORS.primaryLight,
     paddingHorizontal: SPACING.sm,
     paddingVertical: SPACING.xs,
     borderRadius: 12,
@@ -165,7 +168,7 @@ const styles = StyleSheet.create({
   },
   connectBadgeText: {
     fontSize: FONT_SIZES.sm,
-    color: '#4285F4',
+    color: COLORS.primary,
     fontWeight: '600',
   },
   cancelButton: {

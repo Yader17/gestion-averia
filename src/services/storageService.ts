@@ -85,6 +85,11 @@ export async function loadLocationCache(): Promise<Record<string, AveriaLocation
   }
 }
 
+// Geocoding cache only: regenerated on demand, never touches fault records.
+export async function clearLocationCache(): Promise<void> {
+  await AsyncStorage.removeItem(STORAGE_KEYS.LOCATION_CACHE);
+}
+
 function normalizeAveria(averia: Averia): Averia {
   return {
     ...averia,

@@ -1,6 +1,8 @@
 import React from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet } from 'react-native';
-import { COLORS, SPACING, FONT_SIZES } from '../constants/theme';
+import { SPACING, FONT_SIZES } from '../constants/theme';
+import { Palette } from '../theme/palettes';
+import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 
 type SolucionadoFilter = 'todos' | 'si' | 'no';
 type DateSortOrder = 'desc' | 'asc';
@@ -26,6 +28,8 @@ export function FilterBar({
   resultCount,
   totalCount,
 }: FilterBarProps) {
+  const { colors: COLORS } = useTheme();
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.container}>
       <View style={styles.searchRow}>
@@ -115,7 +119,7 @@ export function FilterBar({
 export type { SolucionadoFilter };
 export type { DateSortOrder };
 
-const styles = StyleSheet.create({
+const createStyles = (COLORS: Palette) => StyleSheet.create({
   container: {
     backgroundColor: COLORS.surface,
     paddingHorizontal: SPACING.lg,

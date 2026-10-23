@@ -1,6 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { COLORS, SPACING, FONT_SIZES } from '../constants/theme';
+import { SPACING, FONT_SIZES } from '../constants/theme';
+import { Palette } from '../theme/palettes';
+import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 
 type BarItem = {
   label: string;
@@ -14,6 +16,7 @@ type BarChartProps = {
 };
 
 export function BarChart({ data, title }: BarChartProps) {
+  const styles = useThemedStyles(createStyles);
   const maxValue = Math.max(...data.map((d) => d.value), 1);
 
   if (data.length === 0 || data.every((d) => d.value === 0)) {
@@ -59,7 +62,7 @@ export function BarChart({ data, title }: BarChartProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (COLORS: Palette) => StyleSheet.create({
   container: {
     backgroundColor: COLORS.surface,
     borderRadius: 12,

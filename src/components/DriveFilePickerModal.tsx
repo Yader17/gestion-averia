@@ -10,7 +10,9 @@ import {
   Platform,
 } from 'react-native';
 import { DriveFileInfo, listExcelFiles } from '../services/googleDriveService';
-import { COLORS, SPACING, FONT_SIZES } from '../constants/theme';
+import { SPACING, FONT_SIZES } from '../constants/theme';
+import { Palette } from '../theme/palettes';
+import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 
 type DriveFilePickerModalProps = {
   visible: boolean;
@@ -25,6 +27,8 @@ export function DriveFilePickerModal({
   onClose,
   onFileSelected,
 }: DriveFilePickerModalProps) {
+  const { colors: COLORS } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [files, setFiles] = useState<DriveFileInfo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -128,10 +132,10 @@ export function DriveFilePickerModal({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (COLORS: Palette) => StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: COLORS.overlay,
     justifyContent: 'center',
     alignItems: 'center',
     padding: SPACING.md,

@@ -2,12 +2,9 @@ import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Averia } from '../types/averia';
 import { TABLE_HEADERS } from '../constants/tableHeaders';
-import {
-  COLORS,
-  FONT_SIZES,
-  SPACING,
-  TABLE_COLUMN_WIDTHS,
-} from '../constants/theme';
+import { FONT_SIZES, SPACING, TABLE_COLUMN_WIDTHS } from '../constants/theme';
+import { Palette } from '../theme/palettes';
+import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 
 type AveriaTableProps = {
   averias: Averia[];
@@ -36,6 +33,8 @@ export function AveriaTable({
   onDeleteAveria,
   onGenerateReport,
 }: AveriaTableProps) {
+  const { colors: COLORS } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const totalWidth =
     Object.values(COLUMN_WIDTHS).reduce((sum, width) => sum + width, 0) +
     ACTIONS_WIDTH;
@@ -140,7 +139,7 @@ export function AveriaTable({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (COLORS: Palette) => StyleSheet.create({
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',

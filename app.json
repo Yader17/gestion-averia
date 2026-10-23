@@ -5,12 +5,12 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#F3F5F8"
     },
     "ios": {
       "bundleIdentifier": "com.gestionaverias.app",
@@ -38,7 +38,9 @@
           "photosPermission": "Permite adjuntar fotos a cada avería para incluirlas en el reporte.",
           "cameraPermission": "Permite tomar fotos de la avería y añadirlas al reporte."
         }
-      ]
+      ],
+      "expo-font",
+      "expo-localization"
     ],
     "extra": {
       "cloudSync": {
@@ -53,7 +55,8 @@
       },
       "eas": {
         "projectId": "d07a40ab-47eb-44f1-a149-3da4bc33457f"
-      }
+      },
+      "supportContact": ""
     }
   }
 }

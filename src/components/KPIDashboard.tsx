@@ -1,7 +1,9 @@
 import React, { useMemo } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { Averia } from '../types/averia';
-import { COLORS, SPACING, FONT_SIZES } from '../constants/theme';
+import { SPACING, FONT_SIZES } from '../constants/theme';
+import { Palette } from '../theme/palettes';
+import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 import { DonutChart } from './DonutChart';
 import { BarChart } from './BarChart';
 
@@ -9,13 +11,9 @@ type KPIDashboardProps = {
   averias: Averia[];
 };
 
-const CHART_COLORS = [
-  '#1a73e8', '#e8710a', '#0d652d', '#d32f2f',
-  '#7b1fa2', '#00838f', '#f9a825', '#5d4037',
-  '#546e7a', '#c2185b', '#00695c', '#ef6c00',
-];
-
 export function KPIDashboard({ averias }: KPIDashboardProps) {
+  const { colors: COLORS } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const stats = useMemo(() => {
     const total = averias.length;
     const solucionadas = averias.filter((a) => a.solucionado).length;
@@ -47,7 +45,7 @@ export function KPIDashboard({ averias }: KPIDashboardProps) {
     ([label, value], i) => ({
       label,
       value,
-      color: CHART_COLORS[i % CHART_COLORS.length],
+      color: COLORS.chart[i % COLORS.chart.length],
     })
   );
 
@@ -55,7 +53,7 @@ export function KPIDashboard({ averias }: KPIDashboardProps) {
     ([label, value], i) => ({
       label,
       value,
-      color: CHART_COLORS[(i + 4) % CHART_COLORS.length],
+      color: COLORS.chart[(i + 4) % COLORS.chart.length],
     })
   );
 
@@ -102,7 +100,7 @@ export function KPIDashboard({ averias }: KPIDashboardProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (COLORS: Palette) => StyleSheet.create({
   container: {
     flex: 1,
   },

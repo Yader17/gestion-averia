@@ -26,7 +26,9 @@ import {
   getAveriaPhotos,
   INTERVENCION_TYPES,
 } from '../types/averia';
-import { COLORS, FONT_SIZES, SPACING } from '../constants/theme';
+import { FONT_SIZES, SPACING } from '../constants/theme';
+import { Palette } from '../theme/palettes';
+import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 import { formatDate, getTodayFormatted, parseDate } from '../utils/dateUtils';
 import { generateId } from '../utils/idGenerator';
 import { GeocodingResult, searchRealLocations } from '../services/geocodingService';
@@ -62,6 +64,8 @@ export function AveriaFormModal({
   onAddCustomIntervencion,
   onDeleteCustomIntervencion,
 }: AveriaFormModalProps) {
+  const { colors: COLORS } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [formData, setFormData] = useState<AveriaFormData>({
     ...EMPTY_FORM,
     fecha: getTodayFormatted(),
@@ -688,13 +692,13 @@ function showFormAlert(title: string, message: string) {
   Alert.alert(title, message);
 }
 
-const styles = StyleSheet.create({
+const createStyles = (COLORS: Palette) => StyleSheet.create({
   keyboardContainer: {
     flex: 1,
   },
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: COLORS.overlay,
     justifyContent: 'center',
     alignItems: 'center',
     padding: SPACING.md,
