@@ -10,6 +10,7 @@ type HeaderBarProps = {
   onNewTemplate: () => void;
   isDriveConnected?: boolean;
   userEmail?: string | null;
+  cloudSyncError?: string | null;
 };
 
 export function HeaderBar({
@@ -20,6 +21,7 @@ export function HeaderBar({
   onNewTemplate,
   isDriveConnected,
   userEmail,
+  cloudSyncError,
 }: HeaderBarProps) {
   return (
     <View style={styles.container}>
@@ -31,6 +33,7 @@ export function HeaderBar({
         {isDriveConnected && userEmail && (
           <Text style={styles.driveStatus}>☁️ {userEmail}</Text>
         )}
+        {cloudSyncError && <Text style={styles.cloudErrorText}>{cloudSyncError}</Text>}
       </View>
 
       <View style={styles.buttonSection}>
@@ -96,6 +99,12 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZES.sm - 2,
     color: COLORS.primary,
     marginTop: 2,
+  },
+  cloudErrorText: {
+    fontSize: FONT_SIZES.sm - 2,
+    color: COLORS.error,
+    marginTop: 4,
+    maxWidth: 360,
   },
   buttonSection: {
     flexDirection: 'row',

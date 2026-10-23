@@ -1,22 +1,22 @@
 import React from 'react';
-import {
-  View,
-  Text,
-  ScrollView,
-  StyleSheet,
-  Pressable,
-} from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Averia } from '../types/averia';
 import { TABLE_HEADERS } from '../constants/tableHeaders';
-import { COLORS, SPACING, FONT_SIZES, TABLE_COLUMN_WIDTHS } from '../constants/theme';
+import {
+  COLORS,
+  FONT_SIZES,
+  SPACING,
+  TABLE_COLUMN_WIDTHS,
+} from '../constants/theme';
 
 type AveriaTableProps = {
   averias: Averia[];
   onEditAveria: (averia: Averia) => void;
   onDeleteAveria: (id: string) => void;
+  onGenerateReport: (averia: Averia) => void;
 };
 
-const COLUMN_KEYS = TABLE_HEADERS.map((h) => h.key);
+const COLUMN_KEYS = TABLE_HEADERS.map((header) => header.key);
 
 const COLUMN_WIDTHS: Record<string, number> = {
   fecha: TABLE_COLUMN_WIDTHS.fecha,
@@ -28,8 +28,17 @@ const COLUMN_WIDTHS: Record<string, number> = {
   solucionado: TABLE_COLUMN_WIDTHS.solucionado,
 };
 
-export function AveriaTable({ averias, onEditAveria, onDeleteAveria }: AveriaTableProps) {
-  const totalWidth = Object.values(COLUMN_WIDTHS).reduce((sum, w) => sum + w, 0) + 120;
+const ACTIONS_WIDTH = 180;
+
+export function AveriaTable({
+  averias,
+  onEditAveria,
+  onDeleteAveria,
+  onGenerateReport,
+}: AveriaTableProps) {
+  const totalWidth =
+    Object.values(COLUMN_WIDTHS).reduce((sum, width) => sum + width, 0) +
+    ACTIONS_WIDTH;
 
   if (averias.length === 0) {
     return (
@@ -45,7 +54,6 @@ export function AveriaTable({ averias, onEditAveria, onDeleteAveria }: AveriaTab
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator>
       <View style={{ minWidth: totalWidth }}>
-        {/* Header Row */}
         <View style={styles.headerRow}>
           {TABLE_HEADERS.map((header) => (
             <View
@@ -57,12 +65,11 @@ export function AveriaTable({ averias, onEditAveria, onDeleteAveria }: AveriaTab
               </Text>
             </View>
           ))}
-          <View style={[styles.headerCell, { width: 120 }]}>
+          <View style={[styles.headerCell, { width: ACTIONS_WIDTH }]}>
             <Text style={styles.headerText}>Acciones</Text>
           </View>
         </View>
 
-        {/* Data Rows */}
         <ScrollView style={styles.bodyScroll} showsVerticalScrollIndicator>
           {averias.map((averia, index) => (
             <View
@@ -102,8 +109,15 @@ export function AveriaTable({ averias, onEditAveria, onDeleteAveria }: AveriaTab
                   )}
                 </View>
               ))}
-              <View style={[styles.dataCell, { width: 120 }]}>
+
+              <View style={[styles.dataCell, { width: ACTIONS_WIDTH }]}>
                 <View style={styles.actionButtons}>
+                  <Pressable
+                    style={styles.reportButton}
+                    onPress={() => onGenerateReport(averia)}
+                  >
+                    <Text style={styles.reportButtonText}>PDF</Text>
+                  </Pressable>
                   <Pressable
                     style={styles.editButton}
                     onPress={() => onEditAveria(averia)}
@@ -189,12 +203,30 @@ const styles = StyleSheet.create({
   actionButtons: {
     flexDirection: 'row',
     gap: SPACING.md,
+    alignItems: 'center',
+  },
+  reportButton: {
+    minWidth: 52,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: SPACING.sm - 2,
+    borderRadius: 8,
+    backgroundColor: COLORS.error,
+    alignItems: 'center',
+  },
+  reportButtonText: {
+    color: COLORS.white,
+    fontSize: FONT_SIZES.sm,
+    fontWeight: '700',
   },
   editButton: {
     padding: SPACING.sm,
+    borderRadius: 8,
+    backgroundColor: COLORS.primaryLight,
   },
   deleteButton: {
     padding: SPACING.sm,
+    borderRadius: 8,
+    backgroundColor: COLORS.solucionadoNo,
   },
   actionButtonText: {
     fontSize: FONT_SIZES.md,

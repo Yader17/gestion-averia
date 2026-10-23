@@ -30,6 +30,23 @@ export const INTERVENCION_TYPES = [
 
 export type IntervencionType = (typeof INTERVENCION_TYPES)[number];
 
+export type AveriaPhoto = {
+  id: string;
+  uri: string;
+  remoteUrl?: string;
+  storagePath?: string;
+  fileName: string;
+  mimeType: string;
+  width?: number;
+  height?: number;
+};
+
+export type AveriaLocation = {
+  latitude: number;
+  longitude: number;
+  displayName: string;
+};
+
 export type Averia = {
   id: string;
   fecha: string;
@@ -37,8 +54,26 @@ export type Averia = {
   tipoAveria: AveriaType;
   intervencion: string;
   lugar: string;
+  ubicacion?: AveriaLocation | null;
   observacion: string;
   solucionado: boolean;
+  fotos?: AveriaPhoto[];
 };
 
-export type AveriaFormData = Omit<Averia, 'id'>;
+export type AveriaFormData = {
+  fecha: string;
+  numeroBastidor: string;
+  tipoAveria: AveriaType;
+  intervencion: string;
+  lugar: string;
+  ubicacion?: AveriaLocation | null;
+  observacion: string;
+  solucionado: boolean;
+  fotos: AveriaPhoto[];
+};
+
+export function getAveriaPhotos(
+  averia: Pick<Averia, 'fotos'> | Pick<AveriaFormData, 'fotos'>
+): AveriaPhoto[] {
+  return Array.isArray(averia.fotos) ? averia.fotos : [];
+}

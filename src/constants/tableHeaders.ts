@@ -16,4 +16,7 @@ export const EXCEL_HEADERS = [
   'Lugar',
   'Observación',
   'Solucionado',
+  'Ubicación real',
+  'Latitud',
+  'Longitud',
 ] as const;

@@ -3,12 +3,15 @@ import { View, Text, TextInput, Pressable, StyleSheet } from 'react-native';
 import { COLORS, SPACING, FONT_SIZES } from '../constants/theme';
 
 type SolucionadoFilter = 'todos' | 'si' | 'no';
+type DateSortOrder = 'desc' | 'asc';
 
 type FilterBarProps = {
   searchText: string;
   onSearchTextChange: (text: string) => void;
   solucionadoFilter: SolucionadoFilter;
   onSolucionadoFilterChange: (filter: SolucionadoFilter) => void;
+  dateSortOrder: DateSortOrder;
+  onDateSortOrderChange: (order: DateSortOrder) => void;
   resultCount: number;
   totalCount: number;
 };
@@ -18,6 +21,8 @@ export function FilterBar({
   onSearchTextChange,
   solucionadoFilter,
   onSolucionadoFilterChange,
+  dateSortOrder,
+  onDateSortOrderChange,
   resultCount,
   totalCount,
 }: FilterBarProps) {
@@ -63,6 +68,40 @@ export function FilterBar({
           </Pressable>
         ))}
 
+        <Text style={styles.filterLabel}>Fecha:</Text>
+        <Pressable
+          style={[
+            styles.filterChip,
+            dateSortOrder === 'desc' && styles.filterChipActive,
+          ]}
+          onPress={() => onDateSortOrderChange('desc')}
+        >
+          <Text
+            style={[
+              styles.filterChipText,
+              dateSortOrder === 'desc' && styles.filterChipTextActive,
+            ]}
+          >
+            Reciente
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[
+            styles.filterChip,
+            dateSortOrder === 'asc' && styles.filterChipActive,
+          ]}
+          onPress={() => onDateSortOrderChange('asc')}
+        >
+          <Text
+            style={[
+              styles.filterChipText,
+              dateSortOrder === 'asc' && styles.filterChipTextActive,
+            ]}
+          >
+            Antiguo
+          </Text>
+        </Pressable>
+
         {(searchText.length > 0 || solucionadoFilter !== 'todos') && (
           <Text style={styles.resultCount}>
             {resultCount} de {totalCount}
@@ -74,6 +113,7 @@ export function FilterBar({
 }
 
 export type { SolucionadoFilter };
+export type { DateSortOrder };
 
 const styles = StyleSheet.create({
   container: {

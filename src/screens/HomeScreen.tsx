@@ -6,9 +6,14 @@ import * as Sharing from 'expo-sharing';
 import { AveriaTable } from '../components/AveriaTable';
 import { AveriaFormModal } from '../components/AveriaFormModal';
 import { HeaderBar } from '../components/HeaderBar';
-import { FilterBar, SolucionadoFilter } from '../components/FilterBar';
+import {
+  DateSortOrder,
+  FilterBar,
+  SolucionadoFilter,
+} from '../components/FilterBar';
 import { TabPills } from '../components/TabPills';
 import { KPIDashboard } from '../components/KPIDashboard';
+import { AveriasMapView } from '../components/AveriasMapView';
 import { ImportSourceModal } from '../components/ImportSourceModal';
 import { DriveFilePickerModal } from '../components/DriveFilePickerModal';
 import { useAverias } from '../hooks/useAverias';
@@ -19,14 +24,25 @@ import {
   saveCustomIntervencionTypes,
 } from '../services/storageService';
 import {
+  saveCloudCustomIntervencionTypes,
+  subscribeToCloudSettings,
+} from '../services/cloudSyncService';
+import {
+  deleteAveriaPhotos,
+  persistAveriaPhotos,
+} from '../services/photoService';
+import { exportAveriaReportPdf } from '../services/pdfReportService';
+import {
   downloadDriveFile,
   DriveFileInfo,
 } from '../services/googleDriveService';
-import { Averia, AveriaFormData } from '../types/averia';
+import { hydrateAveriasLocations } from '../services/geocodingService';
+import { Averia, AveriaFormData, getAveriaPhotos } from '../types/averia';
 import { COLORS } from '../constants/theme';
+import { parseDate } from '../utils/dateUtils';
 
 export function HomeScreen() {
-  const { averias, addAveria, updateAveria, deleteAveria, setAverias, clearAverias } =
+  const { averias, cloudSyncError, addAveria, updateAveria, deleteAveria, setAverias, clearAverias } =
     useAverias();
 
   const {
@@ -45,19 +61,56 @@ export function HomeScreen() {
   const [driveFileId, setDriveFileId] = useState<string | null>(null);
   const [searchText, setSearchText] = useState('');
   const [solucionadoFilter, setSolucionadoFilter] = useState<SolucionadoFilter>('todos');
+  const [dateSortOrder, setDateSortOrder] = useState<DateSortOrder>('desc');
   const [customIntervencionTypes, setCustomIntervencionTypes] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState('datos');
 
   // Load custom intervención types on mount
   useEffect(() => {
-    loadCustomIntervencionTypes().then(setCustomIntervencionTypes);
+    let isActive = true;
+    let unsubscribe: (() => void) | null = null;
+
+    loadCustomIntervencionTypes().then((types) => {
+      if (!isActive) {
+        return;
+      }
+
+      setCustomIntervencionTypes(types);
+    });
+
+    void subscribeToCloudSettings(
+      async (settings) => {
+        if (!isActive) {
+          return;
+        }
+
+        setCustomIntervencionTypes(settings.customIntervencionTypes);
+        await saveCustomIntervencionTypes(settings.customIntervencionTypes);
+      },
+      (error) => {
+        console.error('Cloud settings subscription error:', error);
+      }
+    ).then((nextUnsubscribe) => {
+      if (!isActive) {
+        nextUnsubscribe();
+        return;
+      }
+
+      unsubscribe = nextUnsubscribe;
+    });
+
+    return () => {
+      isActive = false;
+      unsubscribe?.();
+    };
   }, []);
 
   const handleAddCustomIntervencion = useCallback((name: string) => {
     setCustomIntervencionTypes((prev) => {
       if (prev.includes(name)) return prev;
       const updated = [...prev, name].sort();
-      saveCustomIntervencionTypes(updated);
+      void saveCustomIntervencionTypes(updated);
+      void saveCloudCustomIntervencionTypes(updated);
       return updated;
     });
   }, []);
@@ -65,14 +118,15 @@ export function HomeScreen() {
   const handleDeleteCustomIntervencion = useCallback((name: string) => {
     setCustomIntervencionTypes((prev) => {
       const updated = prev.filter((t) => t !== name);
-      saveCustomIntervencionTypes(updated);
+      void saveCustomIntervencionTypes(updated);
+      void saveCloudCustomIntervencionTypes(updated);
       return updated;
     });
   }, []);
 
   const handleNewTemplate = useCallback(() => {
     const doReset = () => {
-      clearAverias();
+      void clearAverias();
       showAlert('Nueva plantilla', 'Se ha creado una plantilla vacía. Los datos anteriores se han eliminado.');
     };
 
@@ -112,8 +166,30 @@ export function HomeScreen() {
       result = result.filter((a) => a.solucionado === isSolved);
     }
 
-    return result;
-  }, [averias, searchText, solucionadoFilter]);
+    return [...result].sort((left, right) => {
+      const leftTimestamp = getFechaTimestamp(left.fecha);
+      const rightTimestamp = getFechaTimestamp(right.fecha);
+
+      if (leftTimestamp === rightTimestamp) {
+        return 0;
+      }
+
+      if (dateSortOrder === 'asc') {
+        return leftTimestamp - rightTimestamp;
+      }
+
+      return rightTimestamp - leftTimestamp;
+    });
+  }, [averias, searchText, solucionadoFilter, dateSortOrder]);
+
+  const handleViewBastidorRecords = useCallback((bastidor: string) => {
+    if (!bastidor.trim()) {
+      return;
+    }
+
+    setSearchText(bastidor);
+    setActiveTab('datos');
+  }, []);
 
   const handleAddAveria = useCallback(() => {
     setEditingAveria(null);
@@ -127,9 +203,18 @@ export function HomeScreen() {
 
   const handleDeleteAveria = useCallback(
     (id: string) => {
+      const averiaToDelete = averias.find((averia) => averia.id === id);
+
+      const confirmDelete = async () => {
+        if (averiaToDelete) {
+          await deleteAveriaPhotos(getAveriaPhotos(averiaToDelete));
+        }
+        deleteAveria(id);
+      };
+
       if (Platform.OS === 'web') {
         if (window.confirm('¿Estás seguro de que quieres eliminar esta avería?')) {
-          deleteAveria(id);
+          void confirmDelete();
         }
       } else {
         Alert.alert(
@@ -140,38 +225,110 @@ export function HomeScreen() {
             {
               text: 'Eliminar',
               style: 'destructive',
-              onPress: () => deleteAveria(id),
+              onPress: () => {
+                void confirmDelete();
+              },
             },
           ]
         );
       }
     },
-    [deleteAveria]
+    [averias, deleteAveria]
   );
 
   const handleFormSubmit = useCallback(
-    (data: AveriaFormData) => {
-      if (editingAveria) {
-        updateAveria(editingAveria.id, data);
-      } else {
-        addAveria(data);
+    async (data: AveriaFormData) => {
+      try {
+        const persistedPhotos = await persistAveriaPhotos(data.fotos);
+        const payload: AveriaFormData = {
+          ...data,
+          fotos: persistedPhotos,
+        };
+
+        if (editingAveria) {
+          const previousPhotos = getAveriaPhotos(editingAveria);
+          const removedPhotos = previousPhotos.filter(
+            (photo) => !persistedPhotos.some((nextPhoto) => nextPhoto.uri === photo.uri)
+          );
+
+          await deleteAveriaPhotos(removedPhotos);
+          await updateAveria(editingAveria.id, payload);
+          return;
+        }
+
+        await addAveria(payload);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Error desconocido';
+        showAlert('Error al guardar', message);
+        throw error;
       }
     },
     [editingAveria, updateAveria, addAveria]
   );
 
+  const handleGenerateReport = useCallback(async (averia: Averia) => {
+    try {
+      const fileUri = await exportAveriaReportPdf({
+        ...averia,
+        fotos: getAveriaPhotos(averia),
+      });
+
+      if (fileUri) {
+        showAlert('Reporte generado', `PDF creado en: ${fileUri}`);
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Error desconocido';
+      showAlert('Error al generar el reporte', message);
+    }
+  }, []);
+
   const handleOpenImportModal = useCallback(() => {
     setIsImportModalVisible(true);
   }, []);
 
+  const applyImportedAverias = useCallback(
+    (parsedAverias: Averia[], sourceName?: string) => {
+      void setAverias(parsedAverias);
+
+      const importMessage = sourceName
+        ? `Se cargaron ${parsedAverias.length} registros desde "${sourceName}". Las ubicaciones reales se completaran en segundo plano.`
+        : `Se cargaron ${parsedAverias.length} registros. Las ubicaciones reales se completaran en segundo plano.`;
+
+      showAlert('Importación iniciada', importMessage);
+
+      void hydrateAveriasLocations(parsedAverias)
+        .then((hydrated) => {
+          if (hydrated.resolvedCount === 0 && hydrated.unresolvedCount === 0) {
+            return;
+          }
+
+          void setAverias(hydrated.averias);
+        })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : 'Error desconocido';
+          showAlert(
+            'Importación parcial',
+            `Los registros se importaron, pero no se pudieron completar las ubicaciones reales. ${message}`
+          );
+        });
+    },
+    [setAverias]
+  );
+
   const handleImportLocal = useCallback(async () => {
     try {
+      const pickerTypes = Platform.OS === 'web'
+        ? [
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.ms-excel.sheet.macroEnabled.12',
+            'application/vnd.ms-excel',
+          ]
+        : ['*/*'];
+
       const result = await DocumentPicker.getDocumentAsync({
-        type: [
-          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          'application/vnd.ms-excel.sheet.macroEnabled.12',
-          'application/vnd.ms-excel',
-        ],
+        type: pickerTypes,
         copyToCacheDirectory: true,
       });
 
@@ -179,7 +336,15 @@ export function HomeScreen() {
         return;
       }
 
-      const fileUri = result.assets[0].uri;
+      const selectedAsset = result.assets[0];
+      const fileUri = selectedAsset.uri;
+      const fileName = selectedAsset.name || fileUri.split('/').pop() || '';
+
+      if (!isExcelLikeFile(fileName, selectedAsset.mimeType)) {
+        showAlert('Archivo no válido', 'Selecciona un archivo Excel .xlsx, .xlsm o .xls.');
+        return;
+      }
+
       let buffer: ArrayBuffer;
 
       if (Platform.OS === 'web') {
@@ -199,17 +364,13 @@ export function HomeScreen() {
         return;
       }
 
-      setAverias(parsedAverias);
-      showAlert(
-        'Importación exitosa',
-        `Se cargaron ${parsedAverias.length} registros.`
-      );
+      applyImportedAverias(parsedAverias);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Error desconocido';
       showAlert('Error al importar', message);
     }
-  }, [setAverias]);
+  }, [applyImportedAverias]);
 
   const handleImportDrive = useCallback(async () => {
     if (!isDriveConnected) {
@@ -242,18 +403,14 @@ export function HomeScreen() {
         }
 
         setDriveFileId(file.id);
-        setAverias(parsedAverias);
-        showAlert(
-          'Importación exitosa',
-          `Se cargaron ${parsedAverias.length} registros desde "${file.name}".`
-        );
+        applyImportedAverias(parsedAverias, file.name);
       } catch (error) {
         const message =
           error instanceof Error ? error.message : 'Error desconocido';
         showAlert('Error al importar desde Drive', message);
       }
     },
-    [accessToken, setAverias]
+    [accessToken, applyImportedAverias]
   );
 
   const handleExportExcel = useCallback(async () => {
@@ -317,6 +474,7 @@ export function HomeScreen() {
         tabs={[
           { key: 'datos', label: '📋 Datos' },
           { key: 'kpis', label: '📊 KPIs' },
+          { key: 'mapa', label: '🗺️ Mapa' },
         ]}
         activeTab={activeTab}
         onTabChange={setActiveTab}
@@ -329,6 +487,8 @@ export function HomeScreen() {
             onSearchTextChange={setSearchText}
             solucionadoFilter={solucionadoFilter}
             onSolucionadoFilterChange={setSolucionadoFilter}
+            dateSortOrder={dateSortOrder}
+            onDateSortOrderChange={setDateSortOrder}
             resultCount={filteredAverias.length}
             totalCount={averias.length}
           />
@@ -338,11 +498,17 @@ export function HomeScreen() {
               averias={filteredAverias}
               onEditAveria={handleEditAveria}
               onDeleteAveria={handleDeleteAveria}
+              onGenerateReport={handleGenerateReport}
             />
           </View>
         </>
-      ) : (
+      ) : activeTab === 'kpis' ? (
         <KPIDashboard averias={averias} />
+      ) : (
+        <AveriasMapView
+          averias={averias}
+          onViewRecords={handleViewBastidorRecords}
+        />
       )}
 
       <AveriaFormModal
@@ -403,6 +569,53 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
     binary += String.fromCharCode(bytes[i]);
   }
   return btoa(binary);
+}
+
+function isExcelLikeFile(fileName: string, mimeType?: string | null): boolean {
+  const normalizedName = fileName.toLowerCase();
+  const normalizedMime = String(mimeType || '').toLowerCase();
+
+  if (
+    normalizedName.endsWith('.xlsx') ||
+    normalizedName.endsWith('.xlsm') ||
+    normalizedName.endsWith('.xls')
+  ) {
+    return true;
+  }
+
+  return [
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-excel.sheet.macroenabled.12',
+    'application/vnd.ms-excel',
+    'application/octet-stream',
+  ].includes(normalizedMime);
+}
+
+function getFechaTimestamp(fecha: string): number {
+  const parsed = parseDate(fecha);
+  if (parsed) {
+    return parsed.getTime();
+  }
+
+  return 0;
+}
+
+function buildImportSummaryMessage(
+  totalCount: number,
+  resolvedCount: number,
+  unresolvedCount: number
+): string {
+  const parts = [`Se cargaron ${totalCount} registros.`];
+
+  if (resolvedCount > 0) {
+    parts.push(`Se reconocieron ${resolvedCount} ubicación(es) automáticamente desde el campo Lugar.`);
+  }
+
+  if (unresolvedCount > 0) {
+    parts.push(`${unresolvedCount} registro(s) quedaron solo como texto y podrían requerir ajuste manual.`);
+  }
+
+  return parts.join(' ');
 }
 
 const styles = StyleSheet.create({

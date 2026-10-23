@@ -22,6 +22,7 @@
         "backgroundColor": "#ffffff"
       },
       "package": "com.gestionaverias.app",
+      "allowBackup": false,
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
@@ -29,9 +30,27 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-asset",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Permite adjuntar fotos a cada avería para incluirlas en el reporte.",
+          "cameraPermission": "Permite tomar fotos de la avería y añadirlas al reporte."
+        }
+      ]
     ],
     "extra": {
+      "cloudSync": {
+        "firebaseApiKey": "AIzaSyAHGL3Ou0g-NkOSH5kO1iFY5ZzTh7uZCrs",
+        "firebaseAuthDomain": "averias-2026yj.firebaseapp.com",
+        "firebaseProjectId": "averias-2026yj",
+        "firebaseStorageBucket": "averias-2026yj.firebasestorage.app",
+        "firebaseMessagingSenderId": "987360820448",
+        "firebaseAppId": "1:987360820448:web:01e5228f87ec6e1274a485",
+        "workspaceId": "averias-2026yj",
+        "photoSyncEnabled": false
+      },
       "eas": {
         "projectId": "d07a40ab-47eb-44f1-a149-3da4bc33457f"
       }
