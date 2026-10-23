@@ -58,6 +58,12 @@ export type Averia = {
   observacion: string;
   solucionado: boolean;
   fotos?: AveriaPhoto[];
+  // Trazabilidad asignada por el servidor (nunca por el cliente).
+  version?: number;
+  creadoEn?: string;
+  creadoPorNombre?: string | null;
+  actualizadoEn?: string;
+  actualizadoPorNombre?: string | null;
 };
 
 export type AveriaFormData = {

@@ -26,10 +26,9 @@ import {
   loadCustomIntervencionTypes,
   saveCustomIntervencionTypes,
 } from '../services/storageService';
-import {
-  saveCloudCustomIntervencionTypes,
-  subscribeToCloudSettings,
-} from '../services/cloudSyncService';
+import { callApi, describeApiError } from '../services/api/apiClient';
+import { useAuth } from '../auth/AuthContext';
+import { AdminScreen } from './AdminScreen';
 import {
   deleteAveriaPhotos,
   persistAveriaPhotos,
@@ -47,7 +46,7 @@ import { parseDate } from '../utils/dateUtils';
 
 export function HomeScreen({ onReady }: { onReady?: () => void }) {
   const styles = useThemedStyles(createStyles);
-  const { averias, isLoaded, cloudSyncError, addAveria, updateAveria, deleteAveria, setAverias, clearAverias } =
+  const { averias, isLoaded, cloudSyncError, refresh, addAveria, updateAveria, deleteAveria, setAverias, clearAverias } =
     useAverias();
 
   const {
@@ -72,60 +71,45 @@ export function HomeScreen({ onReady }: { onReady?: () => void }) {
     if (isLoaded) onReady?.();
   }, [isLoaded, onReady]);
 
+  const { canWrite, isAdmin, codigo } = useAuth();
   const [section, setSection] = useState<SectionKey>('home');
-  const [moreRoute, setMoreRoute] = useState<'menu' | 'kpis' | 'settings'>('menu');
+  const [moreRoute, setMoreRoute] = useState<'menu' | 'kpis' | 'settings' | 'admin'>('menu');
   const { colors } = useTheme();
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const isDesktop = width >= DESKTOP_BREAKPOINT;
 
-  // Load custom intervención types on mount
+  // Tipos de intervencion personalizados: compartidos desde el servidor, con copia local de respaldo.
   useEffect(() => {
     let isActive = true;
-    let unsubscribe: (() => void) | null = null;
-
     loadCustomIntervencionTypes().then((types) => {
-      if (!isActive) {
-        return;
-      }
-
-      setCustomIntervencionTypes(types);
+      if (isActive) setCustomIntervencionTypes(types);
     });
-
-    void subscribeToCloudSettings(
-      async (settings) => {
-        if (!isActive) {
-          return;
-        }
-
-        setCustomIntervencionTypes(settings.customIntervencionTypes);
-        await saveCustomIntervencionTypes(settings.customIntervencionTypes);
-      },
-      (error) => {
-        console.error('Cloud settings subscription error:', error);
-      }
-    ).then((nextUnsubscribe) => {
-      if (!isActive) {
-        nextUnsubscribe();
-        return;
-      }
-
-      unsubscribe = nextUnsubscribe;
-    });
-
+    callApi<{ tiposIntervencion: string[] }>('tipos.get')
+      .then(async (r) => {
+        if (!isActive) return;
+        setCustomIntervencionTypes(r.tiposIntervencion);
+        await saveCustomIntervencionTypes(r.tiposIntervencion);
+      })
+      .catch((error) => console.error('Tipos de intervencion:', error));
     return () => {
       isActive = false;
-      unsubscribe?.();
     };
+  }, []);
+
+  const persistCustomTypes = useCallback((updated: string[]) => {
+    void saveCustomIntervencionTypes(updated);
+    callApi('tipos.set', { tiposIntervencion: updated }).catch((error) =>
+      showAlert('Error', describeApiError(error))
+    );
   }, []);
 
   const handleAddCustomIntervencion = useCallback((name: string) => {
     setCustomIntervencionTypes((prev) => {
       if (prev.includes(name)) return prev;
       const updated = [...prev, name].sort();
-      void saveCustomIntervencionTypes(updated);
-      void saveCloudCustomIntervencionTypes(updated);
+      persistCustomTypes(updated);
       return updated;
     });
   }, []);
@@ -133,33 +117,39 @@ export function HomeScreen({ onReady }: { onReady?: () => void }) {
   const handleDeleteCustomIntervencion = useCallback((name: string) => {
     setCustomIntervencionTypes((prev) => {
       const updated = prev.filter((t) => t !== name);
-      void saveCustomIntervencionTypes(updated);
-      void saveCloudCustomIntervencionTypes(updated);
+      persistCustomTypes(updated);
       return updated;
     });
   }, []);
 
   const handleNewTemplate = useCallback(() => {
+    if (!isAdmin) {
+      showAlert('Sin permisos', 'Solo un administrador puede vaciar los datos compartidos.');
+      return;
+    }
+
     const doReset = () => {
-      void clearAverias();
-      showAlert('Nueva plantilla', 'Se ha creado una plantilla vacía. Los datos anteriores se han eliminado.');
+      clearAverias()
+        .then(() =>
+          showAlert('Nueva plantilla', 'Se ha creado una plantilla vacía. Los registros eliminados quedan en el historial de auditoría del servidor.')
+        )
+        .catch((error) => showAlert('Error', describeApiError(error)));
     };
 
+    const message =
+      '¿Crear una plantilla nueva? Se eliminarán TODAS las averías compartidas por todos los técnicos. Esta acción afecta a todos los dispositivos.';
+
     if (Platform.OS === 'web') {
-      if (window.confirm('¿Crear una plantilla nueva? Se eliminarán todos los datos actuales.')) {
+      if (window.confirm(message)) {
         doReset();
       }
     } else {
-      Alert.alert(
-        'Nueva Plantilla',
-        '¿Crear una plantilla nueva? Se eliminarán todos los datos actuales.',
-        [
-          { text: 'Cancelar', style: 'cancel' },
-          { text: 'Crear', style: 'destructive', onPress: doReset },
-        ]
-      );
+      Alert.alert('Nueva Plantilla', message, [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Crear', style: 'destructive', onPress: doReset },
+      ]);
     }
-  }, [clearAverias]);
+  }, [clearAverias, isAdmin]);
 
   const filteredAverias = useMemo(() => {
     let result = averias;
@@ -221,11 +211,20 @@ export function HomeScreen({ onReady }: { onReady?: () => void }) {
       const averiaToDelete = averias.find((averia) => averia.id === id);
 
       const confirmDelete = async () => {
-        if (averiaToDelete) {
-          await deleteAveriaPhotos(getAveriaPhotos(averiaToDelete));
+        try {
+          await deleteAveria(id);
+          if (averiaToDelete) {
+            await deleteAveriaPhotos(getAveriaPhotos(averiaToDelete));
+          }
+        } catch (error) {
+          showAlert('No se pudo eliminar', describeApiError(error instanceof Error ? error : new Error(String(error))));
         }
-        deleteAveria(id);
       };
+
+      if (!canWrite) {
+        showAlert('Sin permisos', 'Tu rol es de solo consulta.');
+        return;
+      }
 
       if (Platform.OS === 'web') {
         if (window.confirm('¿Estás seguro de que quieres eliminar esta avería?')) {
@@ -248,12 +247,15 @@ export function HomeScreen({ onReady }: { onReady?: () => void }) {
         );
       }
     },
-    [averias, deleteAveria]
+    [averias, deleteAveria, canWrite]
   );
 
   const handleFormSubmit = useCallback(
     async (data: AveriaFormData) => {
       try {
+        if (!canWrite) {
+          throw new Error('Tu rol es de solo consulta: no puedes modificar averías.');
+        }
         const persistedPhotos = await persistAveriaPhotos(data.fotos);
         const payload: AveriaFormData = {
           ...data,
@@ -279,7 +281,7 @@ export function HomeScreen({ onReady }: { onReady?: () => void }) {
         throw error;
       }
     },
-    [editingAveria, updateAveria, addAveria]
+    [editingAveria, updateAveria, addAveria, canWrite]
   );
 
   const handleGenerateReport = useCallback(async (averia: Averia) => {
@@ -305,31 +307,32 @@ export function HomeScreen({ onReady }: { onReady?: () => void }) {
 
   const applyImportedAverias = useCallback(
     (parsedAverias: Averia[], sourceName?: string) => {
-      void setAverias(parsedAverias);
+      if (!canWrite) {
+        showAlert('Sin permisos', 'Tu rol es de solo consulta.');
+        return;
+      }
 
-      const importMessage = sourceName
-        ? `Se cargaron ${parsedAverias.length} registros desde "${sourceName}". Las ubicaciones reales se completaran en segundo plano.`
-        : `Se cargaron ${parsedAverias.length} registros. Las ubicaciones reales se completaran en segundo plano.`;
+      setAverias(parsedAverias)
+        .then(() => {
+          const importMessage = sourceName
+            ? `Se procesaron ${parsedAverias.length} registros desde "${sourceName}". Se añadieron los nuevos; no se eliminó ningún registro existente.`
+            : `Se procesaron ${parsedAverias.length} registros. Se añadieron los nuevos; no se eliminó ningún registro existente.`;
+          showAlert('Importación completada', importMessage);
 
-      showAlert('Importación iniciada', importMessage);
+          return hydrateAveriasLocations(parsedAverias).then((hydrated) => {
+            if (hydrated.resolvedCount === 0 && hydrated.unresolvedCount === 0) {
+              return;
+            }
 
-      void hydrateAveriasLocations(parsedAverias)
-        .then((hydrated) => {
-          if (hydrated.resolvedCount === 0 && hydrated.unresolvedCount === 0) {
-            return;
-          }
-
-          void setAverias(hydrated.averias);
+            return setAverias(hydrated.averias);
+          });
         })
         .catch((error) => {
           const message = error instanceof Error ? error.message : 'Error desconocido';
-          showAlert(
-            'Importación parcial',
-            `Los registros se importaron, pero no se pudieron completar las ubicaciones reales. ${message}`
-          );
+          showAlert('Importación incompleta', message);
         });
     },
-    [setAverias]
+    [setAverias, canWrite]
   );
 
   const handleImportLocal = useCallback(async () => {
@@ -525,7 +528,7 @@ export function HomeScreen({ onReady }: { onReady?: () => void }) {
   }, [section, moreRoute]);
 
   const inSubRoute = section === 'more' && moreRoute !== 'menu';
-  const showNewButton = section === 'home' || section === 'faults' || section === 'map';
+  const showNewButton = canWrite && (section === 'home' || section === 'faults' || section === 'map');
 
   let content: React.ReactNode;
   switch (section) {
@@ -567,7 +570,9 @@ export function HomeScreen({ onReady }: { onReady?: () => void }) {
         moreRoute === 'kpis' ? (
           <KPIDashboard averias={averias} />
         ) : moreRoute === 'settings' ? (
-          <SettingsScreen recordCount={averias.length} />
+          <SettingsScreen recordCount={averias.length} onOpenAdmin={() => setMoreRoute('admin')} />
+        ) : moreRoute === 'admin' ? (
+          <AdminScreen onDataChanged={() => void refresh()} />
         ) : (
           <MoreScreen onAction={handleMoreAction} />
         );
@@ -592,6 +597,18 @@ export function HomeScreen({ onReady }: { onReady?: () => void }) {
         <Text style={styles.topMeta}>{t('common_records', { count: averias.length })}</Text>
       </View>
       {cloudSyncError ? <Text style={styles.syncError}>{cloudSyncError}</Text> : null}
+      {codigo?.aviso ? (
+        <Pressable
+          onPress={() => {
+            setSection('more');
+            setMoreRoute('settings');
+          }}
+          accessibilityRole="button"
+        >
+          <Text style={styles.syncError}>{t('banner_code_expiring', { count: codigo.diasRestantes })}</Text>
+        </Pressable>
+      ) : null}
+      {!canWrite ? <Text style={styles.syncError}>{t('readonly_notice')}</Text> : null}
 
       <View style={styles.content}>
         {content}

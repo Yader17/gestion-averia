@@ -40,7 +40,8 @@
         }
       ],
       "expo-font",
-      "expo-localization"
+      "expo-localization",
+      "expo-secure-store"
     ],
     "extra": {
       "cloudSync": {
@@ -56,7 +57,10 @@
       "eas": {
         "projectId": "d07a40ab-47eb-44f1-a149-3da4bc33457f"
       },
-      "supportContact": ""
+      "supportContact": "",
+      "backend": {
+        "url": "https://tsftpnfgvnnqhhmdhlcz.supabase.co"
+      }
     }
   }
 }

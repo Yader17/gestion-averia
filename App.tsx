@@ -6,9 +6,12 @@ import { HomeScreen } from './src/screens/HomeScreen';
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import { AnimatedSplash } from './src/components/AnimatedSplash';
 import { WelcomeOnboarding } from './src/components/WelcomeOnboarding';
+import { AuthProvider, useAuth } from './src/auth/AuthContext';
+import { LoginScreen } from './src/screens/LoginScreen';
 
 function Root() {
   const { colors, isDark, preferences, preferencesReady, updatePreferences } = useTheme();
+  const { status } = useAuth();
   const [dataReady, setDataReady] = useState(false);
   const [splashDone, setSplashDone] = useState(false);
   const handleReady = useCallback(() => setDataReady(true), []);
@@ -17,8 +20,9 @@ function Root() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
-      {preferencesReady && <HomeScreen onReady={handleReady} />}
-      {!splashDone && <AnimatedSplash ready={preferencesReady && dataReady} onFinish={handleSplashFinish} />}
+      {preferencesReady && status === 'signedIn' && <HomeScreen onReady={handleReady} />}
+      {preferencesReady && status === 'signedOut' && <LoginScreen />}
+      {!splashDone && <AnimatedSplash ready={preferencesReady && (status === 'signedOut' || (status === 'signedIn' && dataReady))} onFinish={handleSplashFinish} />}
       <WelcomeOnboarding
         visible={splashDone && !preferences.onboardingDone}
         onStart={() => updatePreferences({ onboardingDone: true })}
@@ -31,7 +35,9 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <Root />
+        <AuthProvider>
+          <Root />
+        </AuthProvider>
       </ThemeProvider>
     </SafeAreaProvider>
   );

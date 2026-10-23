@@ -7,18 +7,23 @@ import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 import { useI18n } from '../i18n/useI18n';
 import type { ThemeMode } from '../services/preferencesService';
 import { clearLocationCache, loadLocationCache } from '../services/storageService';
-import { isCloudSyncConfigured } from '../services/firebaseApp';
-import { showMessage } from '../utils/dialogs';
+import { isBackendConfigured } from '../services/api/apiClient';
+import { useSupportContact } from '../services/api/publicConfig';
+import { useAuth } from '../auth/AuthContext';
+import { confirmAction, showMessage } from '../utils/dialogs';
 
 type Props = {
   recordCount: number;
+  onOpenAdmin?: () => void;
 };
 
-export function SettingsScreen({ recordCount }: Props) {
+export function SettingsScreen({ recordCount, onOpenAdmin }: Props) {
   const styles = useThemedStyles(createStyles);
   const { colors, preferences, updatePreferences } = useTheme();
   const { t, language, setLanguage } = useI18n();
+  const auth = useAuth();
   const [cachedLocations, setCachedLocations] = useState<number | null>(null);
+  const [renewing, setRenewing] = useState(false);
 
   const refreshCache = useCallback(() => {
     void loadLocationCache().then((cache) => setCachedLocations(Object.keys(cache).length));
@@ -26,9 +31,23 @@ export function SettingsScreen({ recordCount }: Props) {
 
   useEffect(refreshCache, [refreshCache]);
 
-  const extra = (Constants.expoConfig?.extra ?? {}) as { supportContact?: string };
-  const supportContact = extra.supportContact?.trim();
+  const supportContact = useSupportContact();
+  const formatDate = (iso?: string | null) => (iso ? new Date(iso).toLocaleDateString(language) : '—');
 
+  const renew = () =>
+    confirmAction(t('settings_account_renew'), t('settings_account_renew_desc'), t('settings_account_renew'), t('common_cancel'), () => {
+      setRenewing(true);
+      auth
+        .renewCode()
+        .then((r) => showMessage(t('settings_account_renew'), t('settings_account_renew_done', { code: r.code })))
+        .catch((e) => showMessage(t('settings_account_renew'), e instanceof Error ? e.message : String(e)))
+        .finally(() => setRenewing(false));
+    });
+
+  const logout = () =>
+    confirmAction(t('settings_logout'), t('settings_logout_confirm'), t('settings_logout'), t('common_cancel'), () => {
+      void auth.logout();
+    });
   const clearCache = async () => {
     await clearLocationCache();
     refreshCache();
@@ -81,7 +100,7 @@ export function SettingsScreen({ recordCount }: Props) {
       </Card>
 
       <Card title={t('settings_sync')}>
-        <Row label={t('settings_sync')} value={isCloudSyncConfigured() ? t('settings_sync_cloud') : t('settings_sync_local')} />
+        <Row label={t('settings_sync')} value={isBackendConfigured() ? t('settings_sync_cloud') : t('settings_sync_local')} />
       </Card>
 
       <Card title={t('settings_storage')}>
@@ -94,8 +113,33 @@ export function SettingsScreen({ recordCount }: Props) {
       </Card>
 
       <Card title={t('settings_account')}>
-        <Text style={styles.hint}>{t('settings_account_unavailable')}</Text>
+        <Row label={t('settings_account_name')} value={auth.tecnico?.nombre ?? '—'} />
+        <Row label={t('settings_account_id')} value={auth.tecnico?.id.slice(0, 8) ?? '—'} />
+        <Row label={t('settings_account_role')} value={auth.tecnico ? t(`role_${auth.tecnico.rol}` as const) : '—'} />
+        <Row label={t('settings_account_session')} value={formatDate(auth.sessionExpiresAt)} />
+        <Row
+          label={t('settings_account_code')}
+          value={
+            auth.codigo
+              ? `${formatDate(auth.codigo.expiraEn)} (${t('settings_account_days', { count: auth.codigo.diasRestantes })})`
+              : '—'
+          }
+        />
+        <Pressable style={styles.button} onPress={renew} disabled={renewing} accessibilityRole="button">
+          <Text style={styles.buttonText}>{t('settings_account_renew')}</Text>
+        </Pressable>
+        <Pressable style={styles.button} onPress={logout} accessibilityRole="button">
+          <Text style={styles.buttonText}>{t('settings_logout')}</Text>
+        </Pressable>
       </Card>
+
+      {auth.isAdmin && onOpenAdmin ? (
+        <Card title={t('settings_admin')}>
+          <Pressable style={styles.button} onPress={onOpenAdmin} accessibilityRole="button">
+            <Text style={styles.buttonText}>{t('settings_admin_open')}</Text>
+          </Pressable>
+        </Card>
+      ) : null}
 
       <Card title={t('settings_info')}>
         <Row label={t('settings_version')} value={Constants.expoConfig?.version ?? '—'} />

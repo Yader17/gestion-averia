@@ -125,7 +125,7 @@ async function revokeCodesAndSessions(tecnicoId: string, motivo: string, keepSes
 
 // ---------- Modelo de averías ----------
 // deno-lint-ignore no-explicit-any
-const toClient = (r: any) => ({
+const toClient = (r: any, urls?: Map<string, string>) => ({
   id: r.id,
   fecha: r.fecha,
   numeroBastidor: r.numero_bastidor,
@@ -135,7 +135,7 @@ const toClient = (r: any) => ({
   ubicacion: r.ubicacion,
   observacion: r.observacion,
   solucionado: r.solucionado,
-  fotos: r.fotos ?? [],
+  fotos: (r.fotos ?? []).map((f: Params) => (f.storagePath && urls?.get(f.storagePath as string) ? { ...f, remoteUrl: urls.get(f.storagePath as string) } : f)),
   version: r.version,
   creadoEn: r.creado_en,
   creadoPor: r.creado_por,
@@ -157,13 +157,52 @@ const FIELD_MAP: Record<string, string> = {
   fotos: 'fotos',
 };
 
+const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+
+function sanitizeLocation(v: unknown): Params | null {
+  const o = v as Params | null;
+  if (!o || typeof o !== 'object') return null;
+  const latitude = num(o.latitude);
+  const longitude = num(o.longitude);
+  if (latitude === undefined || longitude === undefined) return null;
+  return { latitude, longitude, displayName: str(o.displayName, 500) };
+}
+
+// Solo metadatos de foto. Si hay storagePath, la URL firmada temporal nunca se persiste.
+function sanitizePhotos(v: unknown): Params[] {
+  if (!Array.isArray(v)) return [];
+  return v.slice(0, 20).filter((x) => x && typeof x === 'object').map((x: Params) => {
+    const out: Params = { id: str(x.id, 100), fileName: str(x.fileName, 200), mimeType: str(x.mimeType, 60) };
+    if (num(x.width)) out.width = num(x.width);
+    if (num(x.height)) out.height = num(x.height);
+    const sp = str(x.storagePath, 300);
+    if (sp) out.storagePath = sp;
+    else if (/^https:\/\//i.test(str(x.remoteUrl, 2000))) out.remoteUrl = str(x.remoteUrl, 2000);
+    return out;
+  });
+}
+
+async function urlMap(rows: Params[]): Promise<Map<string, string>> {
+  const paths = [...new Set(rows.flatMap((r) => ((r.fotos as Params[]) ?? []).map((f) => f.storagePath as string).filter(Boolean)))];
+  const map = new Map<string, string>();
+  for (let i = 0; i < paths.length; i += 200) {
+    const { data } = await db.storage.from('fotos').createSignedUrls(paths.slice(i, i + 200), 3600);
+    for (const d of data ?? []) if (d.signedUrl && d.path) map.set(d.path, d.signedUrl);
+  }
+  return map;
+}
+
+// deno-lint-ignore no-explicit-any
+const one = async (r: any) => toClient(r, await urlMap([r]));
+
 function sanitizeFields(input: Params): Params {
   const out: Params = {};
   for (const [k, col] of Object.entries(FIELD_MAP)) {
     if (!(k in input)) continue;
     const v = input[k];
     if (col === 'solucionado') out[col] = v === true;
-    else if (col === 'fotos') out[col] = Array.isArray(v) ? v.filter((x) => typeof x === 'string').slice(0, 20) : [];
+    else if (col === 'fotos') out[col] = sanitizePhotos(v);
+    else if (col === 'ubicacion') out[col] = sanitizeLocation(v);
     else out[col] = str(v, 5000);
   }
   return out;
@@ -172,7 +211,8 @@ function sanitizeFields(input: Params): Params {
 async function actionAveriasList() {
   const { data, error } = await db.from('averias').select('*').order('creado_en', { ascending: false }).limit(20000);
   if (error) throw new HttpError(500, 'db', 'No se pudieron leer las averías');
-  return { averias: (data ?? []).map(toClient) };
+  const urls = await urlMap(data ?? []);
+  return { averias: (data ?? []).map((r) => toClient(r, urls)) };
 }
 
 async function actionAveriasCreate(a: Actor, p: Params) {
@@ -188,7 +228,7 @@ async function actionAveriasCreate(a: Actor, p: Params) {
     throw new HttpError(500, 'db', 'No se pudo crear la avería');
   }
   await db.from('averias_historial').insert({ averia_id: id, version: 1, accion: 'crear', cambios: fields, tecnico_id: a.id, tecnico_nombre: a.nombre });
-  return { averia: toClient(data) };
+  return { averia: await one(data) };
 }
 
 async function actionAveriasUpdate(a: Actor, p: Params) {
@@ -200,7 +240,7 @@ async function actionAveriasUpdate(a: Actor, p: Params) {
   const { data: current } = await db.from('averias').select('*').eq('id', id).maybeSingle();
   if (!current) throw new HttpError(404, 'not_found', 'La avería no existe (puede haberse eliminado)');
   if (current.version !== expected) {
-    throw new HttpError(409, 'conflict', 'La avería fue modificada por otra persona', { actual: toClient(current) });
+    throw new HttpError(409, 'conflict', 'La avería fue modificada por otra persona', { actual: await one(current) });
   }
   const diff: Params = {};
   for (const [col, val] of Object.entries(changes)) {
@@ -208,7 +248,7 @@ async function actionAveriasUpdate(a: Actor, p: Params) {
       diff[col] = col === 'fotos' ? { antes: (current.fotos ?? []).length, despues: (val as unknown[]).length } : { antes: current[col], despues: val };
     }
   }
-  if (Object.keys(diff).length === 0) return { averia: toClient(current) };
+  if (Object.keys(diff).length === 0) return { averia: await one(current) };
   const { data, error } = await db
     .from('averias')
     .update({ ...changes, version: expected + 1, actualizado_por: a.id, actualizado_por_nombre: a.nombre, actualizado_en: new Date().toISOString() })
@@ -218,10 +258,10 @@ async function actionAveriasUpdate(a: Actor, p: Params) {
   if (error) throw new HttpError(500, 'db', 'No se pudo actualizar la avería');
   if (!data || data.length === 0) {
     const { data: latest } = await db.from('averias').select('*').eq('id', id).maybeSingle();
-    throw new HttpError(409, 'conflict', 'La avería fue modificada por otra persona', { actual: latest ? toClient(latest) : null });
+    throw new HttpError(409, 'conflict', 'La avería fue modificada por otra persona', { actual: latest ? await one(latest) : null });
   }
   await db.from('averias_historial').insert({ averia_id: id, version: expected + 1, accion: 'modificar', cambios: diff, tecnico_id: a.id, tecnico_nombre: a.nombre });
-  return { averia: toClient(data[0]) };
+  return { averia: await one(data[0]) };
 }
 
 async function actionAveriasDelete(a: Actor, p: Params) {
@@ -230,13 +270,52 @@ async function actionAveriasDelete(a: Actor, p: Params) {
   const { data: current } = await db.from('averias').select('*').eq('id', id).maybeSingle();
   if (!current) return { ok: true };
   if (p.expectedVersion !== undefined && current.version !== Number(p.expectedVersion)) {
-    throw new HttpError(409, 'conflict', 'La avería fue modificada por otra persona', { actual: toClient(current) });
+    throw new HttpError(409, 'conflict', 'La avería fue modificada por otra persona', { actual: await one(current) });
   }
   const { error } = await db.from('averias').delete().eq('id', id).eq('version', current.version);
   if (error) throw new HttpError(500, 'db', 'No se pudo eliminar la avería');
   const snapshot = { ...current, fotos: (current.fotos ?? []).length };
   await db.from('averias_historial').insert({ averia_id: id, version: current.version + 1, accion: 'eliminar', cambios: snapshot, tecnico_id: a.id, tecnico_nombre: a.nombre });
   return { ok: true };
+}
+
+async function actionPhotoUploadUrl(a: Actor, p: Params) {
+  requireWriter(a);
+  const mime = str(p.mimeType, 60);
+  if (!['image/jpeg', 'image/png', 'image/webp', 'image/heic'].includes(mime)) throw new HttpError(400, 'bad_request', 'Tipo de imagen no permitido');
+  const safe = str(p.fileName, 100).replace(/[^a-zA-Z0-9._-]/g, '_') || 'foto.jpg';
+  const path = `${crypto.randomUUID()}/${safe}`;
+  const { data, error } = await db.storage.from('fotos').createSignedUploadUrl(path);
+  if (error || !data) throw new HttpError(500, 'storage', 'No se pudo preparar la subida de la foto');
+  return { path, signedUrl: data.signedUrl, token: data.token };
+}
+
+async function actionTypesGet() {
+  const { data } = await db.from('configuracion').select('valor').eq('clave', 'tipos_intervencion').maybeSingle();
+  try { return { tiposIntervencion: JSON.parse(data?.valor ?? '[]') as string[] }; } catch { return { tiposIntervencion: [] }; }
+}
+
+async function actionTypesSet(a: Actor, p: Params) {
+  requireWriter(a);
+  const list = Array.isArray(p.tiposIntervencion) ? [...new Set((p.tiposIntervencion as unknown[]).map((x) => str(x, 80).trim()).filter(Boolean))].slice(0, 200) : [];
+  await db.from('configuracion').upsert({ clave: 'tipos_intervencion', valor: JSON.stringify(list) });
+  await audit(a, 'config.tipos_intervencion', null, { total: list.length });
+  return { ok: true };
+}
+
+// Vaciado total (antigua "Nueva plantilla"): solo administrador; cada registro queda en el historial.
+async function actionAveriasClear(a: Actor, p: Params) {
+  requireAdmin(a);
+  if (p.confirm !== 'VACIAR') throw new HttpError(400, 'bad_request', 'Falta la confirmaci?n expl?cita');
+  const { data } = await db.from('averias').select('*').limit(20000);
+  const rows = data ?? [];
+  for (let i = 0; i < rows.length; i += 200) {
+    const chunk = rows.slice(i, i + 200);
+    await db.from('averias_historial').insert(chunk.map((r) => ({ averia_id: r.id, version: r.version + 1, accion: 'eliminar', cambios: { ...r, fotos: (r.fotos ?? []).length }, tecnico_id: a.id, tecnico_nombre: a.nombre })));
+    await db.from('averias').delete().in('id', chunk.map((r) => r.id));
+  }
+  await audit(a, 'averias.vaciar', null, { total: rows.length });
+  return { deleted: rows.length };
 }
 
 async function actionAveriasHistory(_a: Actor, p: Params) {
@@ -247,7 +326,7 @@ async function actionAveriasHistory(_a: Actor, p: Params) {
 
 // Migración: solo inserta registros que no existen; jamás sobrescribe.
 async function actionAveriasImport(a: Actor, p: Params) {
-  requireAdmin(a);
+  requireWriter(a);
   const records = Array.isArray(p.averias) ? (p.averias as Params[]) : [];
   if (records.length > MAX_BATCH) throw new HttpError(400, 'too_large', `Máximo ${MAX_BATCH} registros por lote`);
   const origen = str(p.origen, 40) || 'cliente';
@@ -510,10 +589,14 @@ Deno.serve(async (req) => {
       case 'averias.update': return json(200, await actionAveriasUpdate(a, p));
       case 'averias.delete': return json(200, await actionAveriasDelete(a, p));
       case 'averias.history': return json(200, await actionAveriasHistory(a, p));
+      case 'averias.import': return json(200, await actionAveriasImport(a, p));
+      case 'fotos.subir': return json(200, await actionPhotoUploadUrl(a, p));
+      case 'tipos.get': return json(200, await actionTypesGet());
+      case 'tipos.set': return json(200, await actionTypesSet(a, p));
     }
     requireAdmin(a);
     switch (action) {
-      case 'averias.import': return json(200, await actionAveriasImport(a, p));
+      case 'averias.vaciar': return json(200, await actionAveriasClear(a, p));
       case 'tecnicos.list': return json(200, await actionTecnicosList());
       case 'tecnicos.create': return json(200, await actionTecnicoCreate(a, p));
       case 'tecnicos.update': return json(200, await actionTecnicoUpdate(a, p));

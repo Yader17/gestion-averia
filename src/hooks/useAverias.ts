@@ -1,20 +1,23 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { Averia, AveriaFormData } from '../types/averia';
+import { AppState } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Averia, AveriaFormData, AveriaPhoto } from '../types/averia';
 import { generateId } from '../utils/idGenerator';
-import { saveAverias, loadAverias, clearAverias as clearStorage } from '../services/storageService';
-import {
-  clearCloudAverias,
-  deleteCloudAveria,
-  replaceCloudAverias,
-  subscribeToCloudAverias,
-  upsertCloudAveria,
-} from '../services/cloudSyncService';
-import { isCloudPhotoSyncEnabled, isCloudSyncConfigured } from '../services/firebaseApp';
+import { ApiError, callApi, describeApiError } from '../services/api/apiClient';
+import { readPhotoUriAsBytes } from '../services/photoService';
+
+// Copia de lectura del servidor. NO es la clave de datos antigua (@gestion_averias/data),
+// que se conserva intacta hasta que el administrador complete la migración.
+const CACHE_KEY = '@gestion_averias/cache_v2';
+const POLL_INTERVAL_MS = 30_000;
+const IMPORT_BATCH = 200;
 
 type UseAveriasReturn = {
   averias: Averia[];
   isLoaded: boolean;
   cloudSyncError: string | null;
+  lastSyncAt: number | null;
+  refresh: () => Promise<void>;
   addAveria: (formData: AveriaFormData) => Promise<void>;
   updateAveria: (id: string, formData: AveriaFormData) => Promise<void>;
   deleteAveria: (id: string) => Promise<void>;
@@ -22,266 +25,224 @@ type UseAveriasReturn = {
   clearAverias: () => Promise<void>;
 };
 
+type ServerPhoto = AveriaPhoto & { storagePath?: string; remoteUrl?: string };
+type ServerAveria = Omit<Averia, 'fotos'> & { fotos: ServerPhoto[] };
+
+function fromServer(row: ServerAveria): Averia {
+  return {
+    ...row,
+    fotos: (row.fotos ?? []).map((f) => ({ ...f, uri: f.remoteUrl ?? f.uri ?? '' })),
+  };
+}
+
+function normalizeMime(mime: string): string {
+  const m = (mime || '').toLowerCase().replace('image/jpg', 'image/jpeg');
+  return ['image/jpeg', 'image/png', 'image/webp', 'image/heic'].includes(m) ? m : 'image/jpeg';
+}
+
+// Sube al almacén privado las fotos que solo existen en el dispositivo.
+async function uploadPendingPhotos(photos: AveriaPhoto[]): Promise<Record<string, unknown>[]> {
+  const out: Record<string, unknown>[] = [];
+  for (const photo of photos) {
+    const meta = { id: photo.id, fileName: photo.fileName, mimeType: photo.mimeType, width: photo.width, height: photo.height };
+    if (photo.storagePath) {
+      out.push({ ...meta, storagePath: photo.storagePath });
+      continue;
+    }
+    if (/^https:\/\//i.test(photo.uri)) {
+      out.push({ ...meta, remoteUrl: photo.uri });
+      continue;
+    }
+    const mimeType = normalizeMime(photo.mimeType);
+    const slot = await callApi<{ path: string; signedUrl: string }>('fotos.subir', { fileName: photo.fileName, mimeType });
+    const bytes = await readPhotoUriAsBytes(photo.uri);
+    const put = await fetch(slot.signedUrl, { method: 'PUT', headers: { 'Content-Type': mimeType }, body: bytes as unknown as BodyInit });
+    if (!put.ok) throw new Error('No se pudo subir una de las fotos. Inténtalo de nuevo.');
+    out.push({ ...meta, mimeType, storagePath: slot.path });
+  }
+  return out;
+}
+
+const contentKey = (a: Averia) =>
+  JSON.stringify([a.fecha, a.numeroBastidor, a.tipoAveria, a.intervencion, a.lugar, a.ubicacion ?? null, a.observacion, a.solucionado]);
+
+async function toPayload(a: AveriaFormData | Averia, id?: string) {
+  return {
+    ...(id ? { id } : {}),
+    fecha: a.fecha,
+    numeroBastidor: a.numeroBastidor,
+    tipoAveria: a.tipoAveria,
+    intervencion: a.intervencion,
+    lugar: a.lugar,
+    ubicacion: a.ubicacion ?? null,
+    observacion: a.observacion,
+    solucionado: a.solucionado,
+    fotos: await uploadPendingPhotos(a.fotos ?? []),
+  };
+}
+
 export function useAverias(): UseAveriasReturn {
   const [averias, setAveriasState] = useState<Averia[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
   const [cloudSyncError, setCloudSyncError] = useState<string | null>(null);
-  const skipSaveRef = useRef(true);
-  const averiasRef = useRef<Averia[]>([]);
-  const hasSeededCloudRef = useRef(false);
+  const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
+  const ref = useRef<Averia[]>([]);
+  const busyRef = useRef(false);
 
-  useEffect(() => {
-    averiasRef.current = averias;
-  }, [averias]);
-
-  // Load persisted data on mount
-  useEffect(() => {
-    loadAverias().then((saved) => {
-      if (saved.length > 0) {
-        setAveriasState(saved);
-        averiasRef.current = saved;
-      }
-      skipSaveRef.current = false;
-      setIsLoaded(true);
-    });
+  const commit = useCallback((next: Averia[]) => {
+    ref.current = next;
+    setAveriasState(next);
+    void AsyncStorage.setItem(CACHE_KEY, JSON.stringify(next)).catch(() => undefined);
   }, []);
 
-  useEffect(() => {
-    if (!isLoaded || !isCloudSyncConfigured()) {
-      return;
+  const refresh = useCallback(async () => {
+    if (busyRef.current) return;
+    try {
+      const { averias: rows } = await callApi<{ averias: ServerAveria[] }>('averias.list');
+      commit(rows.map(fromServer));
+      setCloudSyncError(null);
+      setLastSyncAt(Date.now());
+    } catch (e) {
+      if (!(e instanceof ApiError && e.code === 'invalid_session')) setCloudSyncError(describeApiError(e));
     }
+  }, [commit]);
 
-    let isActive = true;
-    let unsubscribe: (() => void) | null = null;
-
-    void subscribeToCloudAverias(
-      async (remoteAverias) => {
-        if (!isActive) {
-          return;
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const cached = await AsyncStorage.getItem(CACHE_KEY);
+        if (cached && active) {
+          const parsed = JSON.parse(cached) as Averia[];
+          ref.current = parsed;
+          setAveriasState(parsed);
         }
-
-        setCloudSyncError(null);
-
-        const nextRemoteAverias = isCloudPhotoSyncEnabled()
-          ? remoteAverias
-          : mergeRemoteAveriasWithLocalPhotos(remoteAverias, averiasRef.current);
-
-        if (
-          nextRemoteAverias.length === 0 &&
-          averiasRef.current.length > 0 &&
-          !hasSeededCloudRef.current
-        ) {
-          hasSeededCloudRef.current = true;
-
-          try {
-            const seededAverias = await replaceCloudAverias(averiasRef.current);
-            if (!isActive) {
-              return;
-            }
-
-            setCloudSyncError(null);
-            setAveriasState(seededAverias);
-            averiasRef.current = seededAverias;
-            await saveAverias(seededAverias);
-          } catch (error) {
-            setCloudSyncError(getCloudSyncErrorMessage(error));
-            console.error('Cloud seed failed:', error);
-          }
-
-          return;
-        }
-
-        setAveriasState(nextRemoteAverias);
-        averiasRef.current = nextRemoteAverias;
-        await saveAverias(nextRemoteAverias);
-      },
-      (error) => {
-        setCloudSyncError(getCloudSyncErrorMessage(error));
-        console.error('Cloud subscription error:', error);
+      } catch {
+        // Caché ilegible: se ignora y se recarga del servidor.
       }
-    ).then((nextUnsubscribe) => {
-      if (!isActive) {
-        nextUnsubscribe();
-        return;
-      }
+      await refresh();
+      if (active) setIsLoaded(true);
+    })();
 
-      unsubscribe = nextUnsubscribe;
+    const timer = setInterval(() => void refresh(), POLL_INTERVAL_MS);
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') void refresh();
     });
-
     return () => {
-      isActive = false;
-      unsubscribe?.();
+      active = false;
+      clearInterval(timer);
+      sub.remove();
     };
-  }, [isLoaded]);
+  }, [refresh]);
 
-  // Auto-save whenever averias change (skip initial load)
-  useEffect(() => {
-    if (skipSaveRef.current) return;
-    void saveAverias(averias);
-  }, [averias]);
-
-  const addAveria = useCallback(async (formData: AveriaFormData) => {
-    const newAveria: Averia = {
-      ...formData,
-      id: generateId(),
-    };
-
-    setAveriasState((prev) => {
-      const next = [...prev, newAveria];
-      averiasRef.current = next;
-      return next;
-    });
-
-    if (!isCloudSyncConfigured()) {
-      return;
-    }
-
+  const guarded = useCallback(async <T,>(fn: () => Promise<T>): Promise<T> => {
+    busyRef.current = true;
     try {
-      const syncedAveria = await upsertCloudAveria(newAveria);
+      const result = await fn();
       setCloudSyncError(null);
-      setAveriasState((prev) => replaceAveria(prev, syncedAveria));
-      averiasRef.current = replaceAveria(averiasRef.current, syncedAveria);
-    } catch (error) {
-      setCloudSyncError(getCloudSyncErrorMessage(error));
-      console.error('Cloud add sync failed:', error);
+      return result;
+    } finally {
+      busyRef.current = false;
     }
   }, []);
 
-  const updateAveria = useCallback(async (id: string, formData: AveriaFormData) => {
-    const nextAveria: Averia = { ...formData, id };
-    const previousAveria = averiasRef.current.find((item) => item.id === id) ?? null;
+  const addAveria = useCallback(
+    async (formData: AveriaFormData) => {
+      await guarded(async () => {
+        const { averia } = await callApi<{ averia: ServerAveria }>('averias.create', { averia: await toPayload(formData, generateId()) });
+        commit([fromServer(averia), ...ref.current]);
+      });
+    },
+    [commit, guarded]
+  );
 
-    setAveriasState((prev) => {
-      const next = replaceAveria(prev, nextAveria);
-      averiasRef.current = next;
-      return next;
-    });
+  const updateAveria = useCallback(
+    async (id: string, formData: AveriaFormData) => {
+      const current = ref.current.find((a) => a.id === id);
+      if (!current) throw new Error('La avería ya no existe.');
+      try {
+        await guarded(async () => {
+          const { averia } = await callApi<{ averia: ServerAveria }>('averias.update', {
+            id,
+            expectedVersion: current.version ?? 1,
+            changes: await toPayload(formData),
+          });
+          commit(ref.current.map((a) => (a.id === id ? fromServer(averia) : a)));
+        });
+      } catch (e) {
+        if (e instanceof ApiError && e.code === 'conflict') {
+          await refresh();
+          throw new Error('Otra persona modificó esta avería mientras la editabas. Se han cargado sus cambios; revisa la ficha y vuelve a aplicar los tuyos.');
+        }
+        throw e;
+      }
+    },
+    [commit, guarded, refresh]
+  );
 
-    if (!isCloudSyncConfigured()) {
-      return;
-    }
+  const deleteAveria = useCallback(
+    async (id: string) => {
+      const current = ref.current.find((a) => a.id === id);
+      try {
+        await guarded(async () => {
+          await callApi('averias.delete', { id, expectedVersion: current?.version });
+          commit(ref.current.filter((a) => a.id !== id));
+        });
+      } catch (e) {
+        if (e instanceof ApiError && e.code === 'conflict') {
+          await refresh();
+          throw new Error('Otra persona modificó esta avería. Revisa los cambios antes de eliminarla.');
+        }
+        throw e;
+      }
+    },
+    [commit, guarded, refresh]
+  );
 
-    try {
-      const syncedAveria = await upsertCloudAveria(nextAveria, previousAveria);
-      setCloudSyncError(null);
-      setAveriasState((prev) => replaceAveria(prev, syncedAveria));
-      averiasRef.current = replaceAveria(averiasRef.current, syncedAveria);
-    } catch (error) {
-      setCloudSyncError(getCloudSyncErrorMessage(error));
-      console.error('Cloud update sync failed:', error);
-    }
-  }, []);
+  // Fusiona: añade los registros nuevos y actualiza los existentes que cambiaron. Nunca elimina.
+  const setAverias = useCallback(
+    async (incoming: Averia[]) => {
+      try {
+        await guarded(async () => {
+          const byId = new Map(ref.current.map((a) => [a.id, a]));
+          const toCreate = incoming.filter((a) => !byId.has(a.id));
+          const toUpdate = incoming.filter((a) => {
+            const c = byId.get(a.id);
+            return c && contentKey(c) !== contentKey(a);
+          });
 
-  const deleteAveria = useCallback(async (id: string) => {
-    const removedAveria = averiasRef.current.find((item) => item.id === id) ?? null;
-
-    setAveriasState((prev) => {
-      const next = prev.filter((averia) => averia.id !== id);
-      averiasRef.current = next;
-      return next;
-    });
-
-    if (!isCloudSyncConfigured() || !removedAveria) {
-      return;
-    }
-
-    try {
-      await deleteCloudAveria(removedAveria);
-      setCloudSyncError(null);
-    } catch (error) {
-      setCloudSyncError(getCloudSyncErrorMessage(error));
-      console.error('Cloud delete sync failed:', error);
-    }
-  }, []);
-
-  const setAverias = useCallback(async (newAverias: Averia[]) => {
-    setAveriasState(newAverias);
-    averiasRef.current = newAverias;
-
-    if (!isCloudSyncConfigured()) {
-      return;
-    }
-
-    try {
-      const syncedAverias = await replaceCloudAverias(newAverias);
-      setCloudSyncError(null);
-      setAveriasState(syncedAverias);
-      averiasRef.current = syncedAverias;
-    } catch (error) {
-      setCloudSyncError(getCloudSyncErrorMessage(error));
-      console.error('Cloud replace sync failed:', error);
-    }
-  }, []);
+          for (let i = 0; i < toCreate.length; i += IMPORT_BATCH) {
+            const batch = await Promise.all(toCreate.slice(i, i + IMPORT_BATCH).map((a) => toPayload(a, a.id)));
+            await callApi('averias.import', { averias: batch, origen: 'importacion' });
+          }
+          for (const a of toUpdate) {
+            const c = byId.get(a.id)!;
+            try {
+              await callApi('averias.update', {
+                id: a.id,
+                expectedVersion: c.version ?? 1,
+                changes: await toPayload({ ...a, fotos: a.fotos?.length ? a.fotos : c.fotos ?? [] }),
+              });
+            } catch (e) {
+              if (!(e instanceof ApiError && e.code === 'conflict')) throw e;
+            }
+          }
+        });
+      } catch (e) {
+        setCloudSyncError(describeApiError(e));
+        throw e;
+      }
+      await refresh();
+    },
+    [guarded, refresh]
+  );
 
   const clearAverias = useCallback(async () => {
-    setAveriasState([]);
-    averiasRef.current = [];
-    await clearStorage();
+    await guarded(async () => {
+      await callApi('averias.vaciar', { confirm: 'VACIAR' });
+      commit([]);
+    });
+  }, [commit, guarded]);
 
-    if (!isCloudSyncConfigured()) {
-      return;
-    }
-
-    try {
-      await clearCloudAverias();
-      setCloudSyncError(null);
-    } catch (error) {
-      setCloudSyncError(getCloudSyncErrorMessage(error));
-      console.error('Cloud clear sync failed:', error);
-    }
-  }, []);
-
-  return {
-    averias,
-    isLoaded,
-    cloudSyncError,
-    addAveria,
-    updateAveria,
-    deleteAveria,
-    setAverias,
-    clearAverias,
-  };
-}
-
-function replaceAveria(averias: Averia[], target: Averia): Averia[] {
-  return averias.map((averia) => (averia.id === target.id ? target : averia));
-}
-
-function mergeRemoteAveriasWithLocalPhotos(remoteAverias: Averia[], localAverias: Averia[]): Averia[] {
-  return remoteAverias.map((remoteAveria) => {
-    if ((remoteAveria.fotos?.length ?? 0) > 0) {
-      return remoteAveria;
-    }
-
-    const localAveria = localAverias.find((item) => item.id === remoteAveria.id);
-    if (!localAveria || (localAveria.fotos?.length ?? 0) === 0) {
-      return remoteAveria;
-    }
-
-    return {
-      ...remoteAveria,
-      fotos: localAveria.fotos,
-    };
-  });
-}
-
-function getCloudSyncErrorMessage(error: unknown): string {
-  const code =
-    typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
-      ? error.code
-      : '';
-
-  if (code === 'permission-denied') {
-    return 'Firebase esta rechazando el acceso. Revisa las reglas de Firestore.';
-  }
-
-  if (code === 'auth/admin-restricted-operation' || code === 'auth/operation-not-allowed') {
-    return 'Firebase no permite el acceso anonimo. Activa Anonymous Authentication.';
-  }
-
-  if (code === 'unavailable') {
-    return 'No se pudo conectar con Firebase. Revisa la conexion a internet.';
-  }
-
-  return 'No se pudo sincronizar con Firebase.';
+  return { averias, isLoaded, cloudSyncError, lastSyncAt, refresh, addAveria, updateAveria, deleteAveria, setAverias, clearAverias };
 }
