@@ -24,7 +24,11 @@
       "package": "com.gestionaverias.app",
       "allowBackup": false,
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -61,6 +65,12 @@
       "backend": {
         "url": "https://tsftpnfgvnnqhhmdhlcz.supabase.co"
       }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/d07a40ab-47eb-44f1-a149-3da4bc33457f"
     }
   }
 }
