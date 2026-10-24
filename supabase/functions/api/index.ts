@@ -19,6 +19,22 @@ import {
   type Role,
 } from '../_shared/codes.ts';
 
+import {
+  AiError,
+  GeminiProvider,
+  SYSTEM_INSTRUCTION,
+  buildUserPrompt,
+  buildFallbackAnswer,
+  faultStats,
+  matchReason,
+  passesFilters,
+  searchRecords,
+  validateAnswer,
+  type AiProvider,
+  type FaultRecord,
+  type Filters,
+} from '../_shared/ai.ts';
+
 const env = (k: string) => Deno.env.get(k) ?? '';
 const db = createClient(env('SUPABASE_URL'), env('SB_SECRET_KEY') || env('SUPABASE_SERVICE_ROLE_KEY'), {
   auth: { persistSession: false },
@@ -557,6 +573,78 @@ async function actionBootstrap(p: Params) {
   return { tecnicoId: data.id, code: issued.code, expiraEn: issued.expiresAt };
 }
 
+// ---- Asistente IA (solo lectura): recuperación en servidor + proveedor intercambiable ----
+const AI_USER_PER_HOUR = Number(env('AI_USER_PER_HOUR')) || 20;
+const AI_GLOBAL_PER_DAY = Number(env('AI_GLOBAL_PER_DAY')) || 500;
+
+function aiProvider(): AiProvider {
+  // Para cambiar de proveedor: implementar AiProvider y devolverlo aquí según AI_PROVIDER.
+  return new GeminiProvider(env('GEMINI_API_KEY'), env('GEMINI_MODEL') || 'gemini-3.6-flash');
+}
+
+const toTime = (v: unknown) => {
+  const t = typeof v === 'string' ? Date.parse(v) : NaN;
+  return Number.isFinite(t) ? t : null;
+};
+
+async function actionAiAsk(a: Actor, p: Params) {
+  const question = str(p.pregunta, 1000).trim();
+  if (question.length < 3) throw new HttpError(400, 'bad_request', 'Escribe una pregunta');
+  const lang = p.lang === 'en' ? 'en' : 'es';
+  const f = (p.filtros ?? {}) as Params;
+  const filters: Filters = {
+    status: f.status === 'resolved' || f.status === 'pending' ? f.status : 'all',
+    tipo: str(f.tipo, 60) || null,
+    from: toTime(f.from),
+    to: toTime(f.to),
+  };
+
+  const { data, error } = await db
+    .from('averias')
+    .select('id,fecha,numero_bastidor,tipo_averia,intervencion,lugar,observacion,solucionado')
+    .limit(20000);
+  if (error) throw new HttpError(500, 'db', 'No se pudo leer el historial');
+  const records = (data ?? []) as FaultRecord[];
+  const matches = searchRecords(records, question, filters, 8);
+  const related = matches.map((m) => ({
+    id: m.record.id,
+    fecha: m.record.fecha,
+    equipo: [m.record.numero_bastidor, m.record.intervencion].filter(Boolean).join(' · '),
+    numeroBastidor: m.record.numero_bastidor,
+    tipoAveria: m.record.tipo_averia,
+    registro: m.record.observacion.slice(0, 600),
+    solucionado: m.record.solucionado,
+    motivo: matchReason(m, lang),
+  }));
+  const base = { relacionadas: related, matchedCount: related.length };
+
+  // Límites por usuario y globales (se cuentan los intentos, también los que fallen en el proveedor).
+  const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
+  const dayAgo = new Date(Date.now() - dayMs).toISOString();
+  const [{ count: mine }, { count: all }] = await Promise.all([
+    db.from('ia_consultas').select('id', { count: 'exact', head: true }).eq('tecnico_id', a.id).gte('en', hourAgo),
+    db.from('ia_consultas').select('id', { count: 'exact', head: true }).gte('en', dayAgo),
+  ]);
+  if ((mine ?? 0) >= AI_USER_PER_HOUR) return { ...base, ia: { estado: 'limite_usuario' } };
+  if ((all ?? 0) >= AI_GLOBAL_PER_DAY) return { ...base, ia: { estado: 'limite_global' } };
+  if (!env('GEMINI_API_KEY')) return { ...base, ia: { estado: 'no_configurada' } };
+
+  await db.from('ia_consultas').insert({ tecnico_id: a.id });
+  const filteredStats = faultStats(records.filter((r) => passesFilters(r, filters)));
+  const provider = aiProvider();
+  try {
+    const raw = await provider.generateJson(SYSTEM_INSTRUCTION, buildUserPrompt(question, matches, filteredStats));
+    const respuesta = validateAnswer(raw, matches.map((m) => m.record));
+    return { ...base, estadisticas: filteredStats, ia: { estado: 'ok', proveedor: provider.name }, respuesta };
+  } catch (e) {
+    if (e instanceof AiError) {
+      console.error('ia', e.kind, e.message);
+      return { ...base, ia: { estado: e.kind, detalle: e.message }, respuesta: buildFallbackAnswer(matches) };
+    }
+    throw e;
+  }
+}
+
 async function actionPublicConfig() {
   const { data } = await db.from('configuracion').select('valor').eq('clave', 'contacto_codigos').maybeSingle();
   return { contacto: data?.valor ?? '' };
@@ -591,6 +679,7 @@ Deno.serve(async (req) => {
       case 'averias.history': return json(200, await actionAveriasHistory(a, p));
       case 'averias.import': return json(200, await actionAveriasImport(a, p));
       case 'fotos.subir': return json(200, await actionPhotoUploadUrl(a, p));
+      case 'ia.consultar': return json(200, await actionAiAsk(a, p));
       case 'tipos.get': return json(200, await actionTypesGet());
       case 'tipos.set': return json(200, await actionTypesSet(a, p));
     }

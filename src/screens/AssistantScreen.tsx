@@ -6,8 +6,11 @@ import { SPACING, FONT_SIZES } from '../constants/theme';
 import { Palette } from '../theme/palettes';
 import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 import { useI18n } from '../i18n/useI18n';
+import type { TranslationKey } from '../i18n';
 import { AveriaCard } from '../components/AveriaCard';
 import { RetrievalMatch, searchAverias } from '../services/ai/retrieval';
+import { askAssistant, type AiAskResponse } from '../services/api/assistantApi';
+import { describeApiError } from '../services/api/apiClient';
 
 type Props = {
   averias: Averia[];
@@ -16,21 +19,58 @@ type Props = {
 
 type StatusFilter = 'all' | 'resolved' | 'pending';
 
-// Local-retrieval mode: the generative provider (Gemini via secure backend) is not connected yet.
+function stateMessage(
+  state: AiAskResponse['ia']['estado'],
+  t: (k: TranslationKey, p?: Record<string, string | number>) => string
+) {
+  switch (state) {
+    case 'limite_usuario': return t('ai_state_user_limit');
+    case 'limite_global': return t('ai_state_global_limit');
+    case 'no_configurada': return t('ai_state_not_configured');
+    case 'quota': return t('ai_state_quota');
+    case 'unavailable': return t('ai_state_unavailable');
+    case 'bad_response': return t('ai_state_bad_response');
+    default: return '';
+  }
+}
+
 export function AssistantScreen({ averias, onOpenAveria }: Props) {
   const styles = useThemedStyles(createStyles);
   const { colors } = useTheme();
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const [input, setInput] = useState('');
   const [submitted, setSubmitted] = useState('');
   const [status, setStatus] = useState<StatusFilter>('all');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [serverResult, setServerResult] = useState<AiAskResponse | null>(null);
 
-  const results: RetrievalMatch[] = useMemo(
+  const localResults: RetrievalMatch[] = useMemo(
     () => (submitted ? searchAverias(averias, submitted, { status }, 10) : []),
     [averias, submitted, status]
   );
+  const byId = useMemo(() => new Map(averias.map((a) => [a.id, a])), [averias]);
 
-  const submit = () => setSubmitted(input.trim());
+  const submit = async () => {
+    const q = input.trim();
+    setSubmitted(q);
+    setError(null);
+    setServerResult(null);
+    if (!q) return;
+    setLoading(true);
+    try {
+      const result = await askAssistant(q, { status }, language);
+      setServerResult(result);
+    } catch (e) {
+      setError(describeApiError(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const serverStructured = !!serverResult?.respuesta;
+  const fallbackActive = submitted.length > 0 && (!serverStructured || !!error);
+  const relatedCards = serverResult?.relacionadas ?? [];
 
   return (
     <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
@@ -44,23 +84,18 @@ export function AssistantScreen({ averias, onOpenAveria }: Props) {
         </View>
       </View>
 
-      <View style={styles.notice}>
-        <Ionicons name="information-circle-outline" size={20} color={colors.primary} />
-        <Text style={styles.noticeText}>{t('ai_mode_notice')}</Text>
-      </View>
-
       <View style={styles.searchRow}>
         <TextInput
           style={styles.input}
           value={input}
           onChangeText={setInput}
-          onSubmitEditing={submit}
+          onSubmitEditing={() => void submit()}
           returnKeyType="search"
           placeholder={t('ai_search_placeholder')}
           placeholderTextColor={colors.textSecondary}
           accessibilityLabel={t('ai_search_placeholder')}
         />
-        <Pressable style={styles.searchButton} onPress={submit} accessibilityRole="button" accessibilityLabel={t('ai_search')}>
+        <Pressable style={styles.searchButton} onPress={() => void submit()} accessibilityRole="button" accessibilityLabel={t('ai_search')}>
           <Ionicons name="search" size={20} color={colors.onPrimary} />
         </Pressable>
       </View>
@@ -81,44 +116,139 @@ export function AssistantScreen({ averias, onOpenAveria }: Props) {
         ))}
       </View>
 
+      {loading ? <Text style={styles.muted}>{t('ai_loading')}</Text> : null}
+      {error ? <Text style={styles.alert}>{error}</Text> : null}
+      {serverResult && serverResult.ia.estado !== 'ok' ? (
+        <View style={styles.notice}>
+          <Ionicons name="alert-circle-outline" size={20} color={colors.warning} />
+          <Text style={styles.noticeText}>{stateMessage(serverResult.ia.estado, t)}</Text>
+        </View>
+      ) : null}
+      {fallbackActive ? (
+        <View style={styles.notice}>
+          <Ionicons name="information-circle-outline" size={20} color={colors.primary} />
+          <Text style={styles.noticeText}>{t('ai_fallback_notice')}</Text>
+        </View>
+      ) : null}
+
       {submitted ? (
         <View style={styles.answer}>
-          <Text style={styles.summary}>
-            {results.length > 0
-              ? t('ai_summary', { count: results.length, query: submitted })
-              : t('ai_none_found')}
-          </Text>
-          {results.length > 0 && <Text style={styles.muted}>{t('ai_resolved_first')}</Text>}
+          {serverStructured ? (
+            <>
+              <Text style={styles.sectionTitle}>{t('ai_problem_summary')}</Text>
+              <Text style={styles.summary}>{serverResult.respuesta?.resumen || t('ai_none_found')}</Text>
+              {!serverResult.respuesta?.suficientes ? <Text style={styles.muted}>{t('ai_insufficient')}</Text> : null}
 
-          {results.length > 0 && (
+              <Text style={styles.sectionTitle}>{t('ai_background_found')}</Text>
+              {serverResult.respuesta?.antecedentes.length ? (
+                serverResult.respuesta.antecedentes.map((item) => (
+                  <Text style={styles.bullet} key={`a-${item.id}`}>• #{item.id}: {item.motivo}</Text>
+                ))
+              ) : (
+                <Text style={styles.muted}>{t('ai_none_found')}</Text>
+              )}
+
+              <Text style={styles.sectionTitle}>{t('ai_possible_causes')}</Text>
+              {serverResult.respuesta?.causas.length ? (
+                serverResult.respuesta.causas.map((item, idx) => (
+                  <Text style={styles.bullet} key={`c-${idx}`}>• {item.texto} ({item.tipo})</Text>
+                ))
+              ) : (
+                <Text style={styles.muted}>{t('ai_none_found')}</Text>
+              )}
+
+              <Text style={styles.sectionTitle}>{t('ai_checks_suggested')}</Text>
+              {serverResult.respuesta?.comprobaciones.length ? (
+                serverResult.respuesta.comprobaciones.map((item, idx) => (
+                  <Text style={styles.bullet} key={`k-${idx}`}>• {item.texto} ({item.tipo})</Text>
+                ))
+              ) : (
+                <Text style={styles.muted}>{t('ai_none_found')}</Text>
+              )}
+
+              <Text style={styles.sectionTitle}>{t('ai_previous_solutions')}</Text>
+              {serverResult.respuesta?.solucionesPrevias.length ? (
+                serverResult.respuesta.solucionesPrevias.map((item, idx) => (
+                  <Text style={styles.bullet} key={`s-${idx}`}>• {item.texto} (#{item.fuente})</Text>
+                ))
+              ) : (
+                <Text style={styles.muted}>{t('ai_no_solution')}</Text>
+              )}
+
+              <Text style={styles.sectionTitle}>{t('ai_internal_sources')}</Text>
+              <Text style={styles.muted}>
+                {serverResult.respuesta?.antecedentes.map((a) => `#${a.id}`).join(', ') || t('ai_none_found')}
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.summary}>
+                {localResults.length > 0 ? t('ai_summary', { count: localResults.length, query: submitted }) : t('ai_none_found')}
+              </Text>
+              {localResults.length > 0 && <Text style={styles.muted}>{t('ai_resolved_first')}</Text>}
+            </>
+          )}
+
+          {(serverStructured ? relatedCards.length > 0 : localResults.length > 0) ? (
             <>
               <Text style={styles.sectionTitle} accessibilityRole="header">
                 {t('ai_related')}
               </Text>
-              {results.map((match) => (
-                <AveriaCard key={match.averia.id} averia={match.averia}>
-                  <View style={styles.why}>
-                    <Text style={styles.whyLabel}>{t('ai_why')}</Text>
-                    <Text style={styles.whyText}>{t('ai_why_terms', { terms: match.matchedTerms.join(', ') })}</Text>
-                    <Text style={styles.whyLabel}>{t('ai_solution_documented')}</Text>
-                    <Text style={styles.whyText}>
-                      {match.averia.solucionado && match.averia.observacion
-                        ? match.averia.observacion
-                        : t('ai_no_solution')}
-                    </Text>
-                    <Text style={styles.id}>ID: {match.averia.id}</Text>
-                    <Pressable
-                      style={styles.viewButton}
-                      onPress={() => onOpenAveria(match.averia)}
-                      accessibilityRole="button"
-                    >
-                      <Text style={styles.viewButtonText}>{t('ai_view_fault')}</Text>
-                    </Pressable>
-                  </View>
-                </AveriaCard>
-              ))}
+              {serverStructured
+                ? relatedCards.map((card) => {
+                    const source = byId.get(card.id);
+                    return (
+                      <AveriaCard key={card.id} averia={source ?? {
+                        id: card.id,
+                        fecha: card.fecha,
+                        numeroBastidor: card.numeroBastidor,
+                        tipoAveria: (card.tipoAveria as Averia['tipoAveria']) || 'Otro',
+                        intervencion: card.equipo,
+                        lugar: '',
+                        observacion: card.registro,
+                        solucionado: card.solucionado,
+                      }}>
+                        <View style={styles.why}>
+                          <Text style={styles.whyLabel}>{t('ai_why')}</Text>
+                          <Text style={styles.whyText}>{card.motivo}</Text>
+                          <Text style={styles.whyLabel}>{t('ai_solution_documented')}</Text>
+                          <Text style={styles.whyText}>
+                            {source?.observacion || card.registro || t('ai_no_solution')}
+                          </Text>
+                          <Text style={styles.id}>ID: {card.id}</Text>
+                          {source ? (
+                            <Pressable style={styles.viewButton} onPress={() => onOpenAveria(source)} accessibilityRole="button">
+                              <Text style={styles.viewButtonText}>{t('ai_view_fault')}</Text>
+                            </Pressable>
+                          ) : null}
+                        </View>
+                      </AveriaCard>
+                    );
+                  })
+                : localResults.map((match) => (
+                    <AveriaCard key={match.averia.id} averia={match.averia}>
+                      <View style={styles.why}>
+                        <Text style={styles.whyLabel}>{t('ai_why')}</Text>
+                        <Text style={styles.whyText}>{t('ai_why_terms', { terms: match.matchedTerms.join(', ') })}</Text>
+                        <Text style={styles.whyLabel}>{t('ai_solution_documented')}</Text>
+                        <Text style={styles.whyText}>
+                          {match.averia.solucionado && match.averia.observacion
+                            ? match.averia.observacion
+                            : t('ai_no_solution')}
+                        </Text>
+                        <Text style={styles.id}>ID: {match.averia.id}</Text>
+                        <Pressable
+                          style={styles.viewButton}
+                          onPress={() => onOpenAveria(match.averia)}
+                          accessibilityRole="button"
+                        >
+                          <Text style={styles.viewButtonText}>{t('ai_view_fault')}</Text>
+                        </Pressable>
+                      </View>
+                    </AveriaCard>
+                  ))}
             </>
-          )}
+          ) : null}
         </View>
       ) : null}
     </ScrollView>
@@ -131,6 +261,7 @@ const createStyles = (COLORS: Palette) =>
     headerRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
     title: { fontSize: FONT_SIZES.xxl, fontWeight: '700', color: COLORS.text },
     muted: { fontSize: FONT_SIZES.md, color: COLORS.textSecondary },
+    alert: { fontSize: FONT_SIZES.sm, color: COLORS.error },
     notice: {
       flexDirection: 'row',
       gap: SPACING.sm,
@@ -176,6 +307,7 @@ const createStyles = (COLORS: Palette) =>
     answer: { gap: SPACING.sm },
     summary: { fontSize: FONT_SIZES.lg, color: COLORS.text, fontWeight: '600' },
     sectionTitle: { fontSize: FONT_SIZES.xl, fontWeight: '700', color: COLORS.text, marginTop: SPACING.sm },
+    bullet: { fontSize: FONT_SIZES.md, color: COLORS.text, lineHeight: 20 },
     why: {
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: COLORS.border,
