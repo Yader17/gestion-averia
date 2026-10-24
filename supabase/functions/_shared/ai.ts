@@ -181,7 +181,7 @@ export class GeminiProvider implements AiProvider {
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: system }] },
         contents: [{ role: 'user', parts: [{ text: user }] }],
-        generationConfig: { temperature: 0.2, maxOutputTokens: 2048, responseMimeType: 'application/json' },
+        generationConfig: { temperature: 0.2, maxOutputTokens: 8192, responseMimeType: 'application/json' },
       }),
       signal: AbortSignal.timeout(this.timeoutMs),
     });
@@ -190,11 +190,11 @@ export class GeminiProvider implements AiProvider {
   async generateJson(system: string, user: string): Promise<string> {
     if (!this.apiKey) throw new AiError('not_configured', 'Falta GEMINI_API_KEY en el servidor');
     let res: Response | null = null;
-    const candidates = [this.model, 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'];
+    const candidates = [...new Set([this.model, 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'])];
     try {
       for (const model of candidates) {
         res = await this.callModel(model, system, user);
-        if (res.status !== 404) break;
+        if (res.status !== 404 && res.status !== 503 && res.status !== 429) break;
       }
     } catch {
       throw new AiError('unavailable', 'No se pudo conectar con el proveedor de IA');
@@ -203,8 +203,10 @@ export class GeminiProvider implements AiProvider {
     if (res.status === 429) throw new AiError('quota', 'Cuota del proveedor de IA agotada');
     if (!res.ok) throw new AiError('unavailable', `El proveedor de IA respondió ${res.status}`);
     const data = await res.json().catch(() => null);
-    const text = data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? '').join('') ?? '';
-    if (!text) throw new AiError('bad_response', 'Respuesta vacía del proveedor de IA');
+    const cand = data?.candidates?.[0];
+    const text = cand?.content?.parts?.map((p: { text?: string; thought?: boolean }) => (p.thought ? '' : p.text ?? '')).join('') ?? '';
+    if (!text) throw new AiError('bad_response', `Respuesta vacía del proveedor de IA (${cand?.finishReason ?? 'sin motivo'})`);
+    if (cand?.finishReason === 'MAX_TOKENS') throw new AiError('bad_response', 'Respuesta de IA truncada (MAX_TOKENS)');
     return text;
   }
 }
