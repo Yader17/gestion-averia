@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { ActivityIndicator, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SPACING, FONT_SIZES } from '../constants/theme';
 import { Palette } from '../theme/palettes';
@@ -38,7 +38,7 @@ export function LoginScreen() {
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.logoPlate}>
-          <Image source={require('../../assets/tenax-logo-def.png')} style={styles.logo} resizeMode="contain" accessibilityLabel={t('appName')} />
+          <Image source={require('../../assets/app-logo.png')} style={styles.logo} resizeMode="contain" accessibilityLabel={t('appName')} />
         </View>
         <Text style={styles.title} accessibilityRole="header">
           {t('login_title')}

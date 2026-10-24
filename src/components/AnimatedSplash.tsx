@@ -15,7 +15,7 @@ const ENTER_MS = 450;
 const EXIT_MS = 250;
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const LOGO = require('../../assets/tenax-logo-def.png');
+const LOGO = require('../../assets/app-logo.png');
 
 export function AnimatedSplash({ ready, onFinish }: Props) {
   const styles = useThemedStyles(createStyles);

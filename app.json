@@ -10,7 +10,7 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#F3F5F8"
+      "backgroundColor": "#F5F9FD"
     },
     "ios": {
       "bundleIdentifier": "com.gestionaverias.app",
@@ -19,7 +19,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#F5F9FD"
       },
       "package": "com.gestionaverias.app",
       "allowBackup": false,
