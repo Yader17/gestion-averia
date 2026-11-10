@@ -137,7 +137,7 @@ function buildMachineMarkers(averias: Averia[]): MachineMarker[] {
       return;
     }
 
-    const key = item.numeroBastidor.trim() || `sin-bastidor-${item.id}`;
+    const key = `${item.numeroBastidor.trim() || `sin-bastidor-${item.id}`}@${item.ubicacion.latitude.toFixed(5)},${item.ubicacion.longitude.toFixed(5)}`;
     const previous = groups.get(key) ?? [];
     previous.push(item);
     groups.set(key, previous);
@@ -153,7 +153,7 @@ function buildMachineMarkers(averias: Averia[]): MachineMarker[] {
       latitude: location?.latitude ?? DEFAULT_CENTER[0],
       longitude: location?.longitude ?? DEFAULT_CENTER[1],
       lugar: latest.lugar,
-      isSolved: latest.solucionado,
+      isSolved: entries.every((e) => e.solucionado),
       interventions: entries.length,
     };
   });
