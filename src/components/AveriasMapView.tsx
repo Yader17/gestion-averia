@@ -143,13 +143,13 @@ function buildMachineMarkers(averias: Averia[]): MachineMarker[] {
     groups.set(key, previous);
   });
 
-  return Array.from(groups.entries()).map(([bastidor, entries]) => {
+  return Array.from(groups.values()).map((entries) => {
     const latest = entries[entries.length - 1];
     const location = latest.ubicacion;
 
     return {
       id: latest.id,
-      bastidor,
+      bastidor: latest.numeroBastidor.trim(),
       latitude: location?.latitude ?? DEFAULT_CENTER[0],
       longitude: location?.longitude ?? DEFAULT_CENTER[1],
       lugar: latest.lugar,
