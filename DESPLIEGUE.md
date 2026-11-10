@@ -71,7 +71,13 @@ Los datos de la versión anterior estaban en el dispositivo (AsyncStorage). No s
 - Limitaciones conocidas:
   - En la versión web el token de sesión se guarda en `localStorage`; en Android usa SecureStore.
   - El nivel gratuito de Gemini puede usar los datos enviados para mejorar los modelos de Google. No lo uses con información confidencial sin revisar sus condiciones.
-  - La configuración antigua de Firebase sigue en `app.json` (`extra.cloudSync`) y el código de `cloudSyncService.ts` ya no se usa. Si no se va a volver a usar, retira esa configuración y cierra las reglas de Firestore.
+  - El código, la dependencia y la configuración de Firebase ya se han retirado del repositorio. Las reglas de Firestore viven en la consola de Firebase: ciérralas o elimina la base de datos allí.
+
+## Versión de escritorio (Windows)
+
+1. `npm install`
+2. `npm run electron:build-installer` genera el instalador NSIS en `electron-dist\`.
+3. El instalador no está firmado: Windows SmartScreen puede mostrar un aviso ("Más información" > "Ejecutar de todas formas").
   - Pendiente de comprobar en dispositivo real: subida de fotos desde Android y accesibilidad con lector de pantalla.
 
 ## Pruebas

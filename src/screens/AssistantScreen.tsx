@@ -69,7 +69,7 @@ export function AssistantScreen({ averias, onOpenAveria }: Props) {
   };
 
   const serverStructured = !!serverResult?.respuesta;
-  const fallbackActive = submitted.length > 0 && (!serverStructured || !!error);
+  const fallbackActive = submitted.length > 0 && !loading && (!serverStructured || !!error);
   const relatedCards = serverResult?.relacionadas ?? [];
 
   return (
