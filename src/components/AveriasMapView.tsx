@@ -1,10 +1,25 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { FONT_SIZES, SPACING } from '../constants/theme';
+import { useI18n } from '../i18n/useI18n';
 import { Palette } from '../theme/palettes';
 import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 import { Averia } from '../types/averia';
+import { MapStatusFilter, MapStatusFilterValue } from './MapStatusFilter';
+
+type MapLabels = {
+  vin: string;
+  place: string;
+  interventions: string;
+  status: string;
+  done: string;
+  pending: string;
+  noNumber: string;
+  noPlace: string;
+  view: string;
+  groupTooltip: string;
+};
 
 type AveriasMapViewProps = {
   averias: Averia[];
@@ -34,10 +49,31 @@ const EXPANSION_RADIUS = 0.00045;
 export function AveriasMapView({ averias, onViewRecords }: AveriasMapViewProps) {
   const styles = useThemedStyles(createStyles);
   const { isDark } = useTheme();
+  const { t } = useI18n();
+  const [statusFilter, setStatusFilter] = useState<MapStatusFilterValue>('all');
   const machineMarkers = useMemo(() => buildMachineMarkers(averias), [averias]);
-  const markerGroups = useMemo(() => groupMarkersByPoint(machineMarkers), [machineMarkers]);
-  const withLocation = machineMarkers.length;
-  const html = useMemo(() => buildMapHtml(markerGroups, isDark), [markerGroups, isDark]);
+  const visibleMarkers = useMemo(
+    () => machineMarkers.filter((m) => statusFilter === 'all' || (statusFilter === 'solved') === m.isSolved),
+    [machineMarkers, statusFilter]
+  );
+  const markerGroups = useMemo(() => groupMarkersByPoint(visibleMarkers), [visibleMarkers]);
+  const missingLocationCount = averias.filter((item) => !item.ubicacion).length;
+  const labels = useMemo(
+    () => ({
+      vin: t('map_vin'),
+      place: t('map_place'),
+      interventions: t('map_interventions'),
+      status: t('map_status'),
+      done: t('map_status_done'),
+      pending: t('map_status_pending'),
+      noNumber: t('map_no_number'),
+      noPlace: t('map_no_place'),
+      view: t('map_view_records'),
+      groupTooltip: t('map_group_tooltip', { count: '{count}' }),
+    }),
+    [t]
+  );
+  const html = useMemo(() => buildMapHtml(markerGroups, isDark, labels), [markerGroups, isDark, labels]);
 
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
@@ -57,33 +93,38 @@ export function AveriasMapView({ averias, onViewRecords }: AveriasMapViewProps) 
     [onViewRecords]
   );
 
-  if (withLocation === 0) {
+  if (machineMarkers.length === 0) {
     return (
       <View style={styles.container}>
-        <Text style={styles.title}>Vista de mapa</Text>
-        <Text style={styles.body}>
-          No hay averías con ubicación real en este dispositivo. Importa un Excel exportado con la
-          versión nueva o edita el lugar y selecciona una ubicación real.
-        </Text>
+        <Text style={styles.title}>{t('map_empty_title')}</Text>
+        <Text style={styles.body}>{t('map_empty_body')}</Text>
       </View>
     );
   }
 
   return (
     <View style={styles.wrapper}>
+      <MapStatusFilter value={statusFilter} onChange={setStatusFilter} />
       <View style={styles.legendRow}>
-        <Text style={styles.legendItem}>Verde: solucionada</Text>
-        <Text style={styles.legendItem}>Rojo: pendiente</Text>
+        <Text style={styles.legendItem}>{t('map_legend_solved')}</Text>
+        <Text style={styles.legendItem}>{t('map_legend_pending')}</Text>
+        {missingLocationCount > 0 ? (
+          <Text style={styles.legendMuted}>{t('map_missing', { count: missingLocationCount })}</Text>
+        ) : null}
       </View>
-      <WebView
-        originWhitelist={['*']}
-        source={{ html }}
-        onMessage={handleMessage}
-        javaScriptEnabled
-        domStorageEnabled
-        startInLoadingState
-        style={styles.webview}
-      />
+      {visibleMarkers.length === 0 ? (
+        <Text style={styles.body}>{t('map_empty_filter')}</Text>
+      ) : (
+        <WebView
+          originWhitelist={['*']}
+          source={{ html }}
+          onMessage={handleMessage}
+          javaScriptEnabled
+          domStorageEnabled
+          startInLoadingState
+          style={styles.webview}
+        />
+      )}
     </View>
   );
 }
@@ -136,7 +177,8 @@ function groupMarkersByPoint(markers: MachineMarker[]): MarkerGroup[] {
   }));
 }
 
-function buildMapHtml(markerGroups: MarkerGroup[], isDark: boolean): string {
+function buildMapHtml(markerGroups: MarkerGroup[], isDark: boolean, labels: MapLabels): string {
+  const labelsJson = JSON.stringify(labels).replace(/</g, '\\u003c');
   const tileUrl = isDark
     ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
     : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -202,6 +244,7 @@ function buildMapHtml(markerGroups: MarkerGroup[], isDark: boolean): string {
         <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
         <script>
           const markerGroups = ${markersJson};
+          const labels = ${labelsJson};
           const center = ${centerJson};
           const expansionRadius = ${EXPANSION_RADIUS};
           const map = L.map('map').setView(center, 6);
@@ -218,20 +261,26 @@ function buildMapHtml(markerGroups: MarkerGroup[], isDark: boolean): string {
             return [latitude + latitudeOffset, longitude + longitudeOffset];
           }
 
+          function esc(value) {
+            return String(value).replace(/[&<>"']/g, function(c) {
+              return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+            });
+          }
+
           function buildPopupHtml(marker) {
             const disabled = !marker.bastidor || !marker.bastidor.trim();
             const buttonHtml = disabled
-              ? '<button class="view-button" disabled style="opacity:0.55">Ver registros</button>'
-              : '<button class="view-button" type="button" data-action="view-records" data-bastidor="' + encodeURIComponent(marker.bastidor) + '">Ver registros</button>';
+              ? '<button class="view-button" disabled style="opacity:0.55">' + esc(labels.view) + '</button>'
+              : '<button class="view-button" type="button" data-action="view-records" data-bastidor="' + encodeURIComponent(marker.bastidor) + '">' + esc(labels.view) + '</button>';
 
             return [
-              '<strong>Nº Bastidor:</strong> ' + (marker.bastidor || 'Sin número'),
+              '<strong>' + esc(labels.vin) + ':</strong> ' + esc(marker.bastidor || labels.noNumber),
               '<br />',
-              '<strong>Lugar:</strong> ' + (marker.lugar || 'Sin lugar'),
+              '<strong>' + esc(labels.place) + ':</strong> ' + esc(marker.lugar || labels.noPlace),
               '<br />',
-              '<strong>Intervenciones:</strong> ' + marker.interventions,
+              '<strong>' + esc(labels.interventions) + ':</strong> ' + marker.interventions,
               '<br />',
-              '<strong>Estado:</strong> ' + (marker.isSolved ? 'Hecha' : 'Pendiente'),
+              '<strong>' + esc(labels.status) + ':</strong> ' + (marker.isSolved ? esc(labels.done) : esc(labels.pending)),
               '<br />',
               buttonHtml,
             ].join('');
@@ -293,7 +342,7 @@ function buildMapHtml(markerGroups: MarkerGroup[], isDark: boolean): string {
                 }),
               }).addTo(map);
 
-              groupMarker.bindTooltip(group.markers.length + ' averías en este punto. Toca para expandir.');
+              groupMarker.bindTooltip(labels.groupTooltip.replace('{count}', String(group.markers.length)));
               groupMarker.on('click', function() {
                 expandGroup(group, groupMarker);
               });
@@ -303,6 +352,12 @@ function buildMapHtml(markerGroups: MarkerGroup[], isDark: boolean): string {
             const marker = group.markers[0];
             addDetailMarker(marker, marker.latitude, marker.longitude);
           });
+
+          if (markerGroups.length > 1) {
+            map.fitBounds(markerGroups.map(function(g) { return [g.latitude, g.longitude]; }), { padding: [30, 30], maxZoom: 15 });
+          } else if (markerGroups.length === 1) {
+            map.setView([markerGroups[0].latitude, markerGroups[0].longitude], 14);
+          }
         </script>
       </body>
     </html>
@@ -343,6 +398,10 @@ const createStyles = (COLORS: Palette) => StyleSheet.create({
     fontSize: FONT_SIZES.md,
     color: COLORS.text,
     fontWeight: '600',
+  },
+  legendMuted: {
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.textSecondary,
   },
   webview: {
     flex: 1,

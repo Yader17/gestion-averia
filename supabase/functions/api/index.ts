@@ -499,7 +499,8 @@ async function actionCodeReissue(a: Actor, p: Params) {
   const id = str(p.tecnicoId, 60);
   const { data: t } = await db.from('tecnicos').select('id, activo').eq('id', id).maybeSingle();
   if (!t || !t.activo) throw new HttpError(404, 'not_found', 'Técnico no encontrado o inactivo');
-  await revokeCodesAndSessions(id, str(p.motivo, 200) || 'Reemisión por administrador');
+  // Si el administrador reemite su propio código, conserva su sesión para poder ver el código nuevo.
+  await revokeCodesAndSessions(id, str(p.motivo, 200) || 'Reemisión por administrador', id === a.id ? a.sessionId : undefined);
   const issued = await issueCode(id, 'reemision_admin');
   await audit(a, 'codigo.reemitir', id, { motivo: str(p.motivo, 200) });
   return { code: issued.code, expiraEn: issued.expiresAt };

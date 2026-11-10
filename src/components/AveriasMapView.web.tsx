@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import {
   CircleMarker,
@@ -6,12 +6,27 @@ import {
   Popup,
   TileLayer,
   Tooltip,
+  useMap,
 } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { FONT_SIZES, SPACING } from '../constants/theme';
+import { useI18n } from '../i18n/useI18n';
 import { Palette } from '../theme/palettes';
 import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 import { Averia } from '../types/averia';
+import { MapStatusFilter, MapStatusFilterValue } from './MapStatusFilter';
+
+function FitBounds({ points }: { points: [number, number][] }) {
+  const map = useMap();
+  useEffect(() => {
+    if (points.length > 1) {
+      map.fitBounds(points, { padding: [30, 30], maxZoom: 15 });
+    } else if (points.length === 1) {
+      map.setView(points[0], 14);
+    }
+  }, [map, points]);
+  return null;
+}
 
 type AveriasMapViewProps = {
   averias: Averia[];
@@ -82,39 +97,48 @@ const TooltipCompat = Tooltip as unknown as React.ComponentType<{
 export function AveriasMapView({ averias, onViewRecords }: AveriasMapViewProps) {
   const styles = useThemedStyles(createStyles);
   const { colors, isDark } = useTheme();
-  const machineMarkers = useMemo(() => buildMachineMarkers(averias), [averias]);
+  const { t } = useI18n();
+  const [statusFilter, setStatusFilter] = useState<MapStatusFilterValue>('all');
+  const allMarkers = useMemo(() => buildMachineMarkers(averias), [averias]);
+  const machineMarkers = useMemo(
+    () => allMarkers.filter((m) => statusFilter === 'all' || (statusFilter === 'solved') === m.isSolved),
+    [allMarkers, statusFilter]
+  );
   const groupedByPoint = useMemo(() => groupMarkersByPoint(machineMarkers), [machineMarkers]);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const boundsPoints = useMemo(
+    () => groupedByPoint.map((g) => [g.latitude, g.longitude] as [number, number]),
+    [groupedByPoint]
+  );
 
   const missingLocationCount = averias.filter((item) => !item.ubicacion).length;
   const mapCenter = machineMarkers.length > 0
     ? ([machineMarkers[0].latitude, machineMarkers[0].longitude] as [number, number])
     : DEFAULT_CENTER;
 
-  if (machineMarkers.length === 0) {
+  if (allMarkers.length === 0) {
     return (
       <View style={styles.emptyContainer}>
-        <Text style={styles.emptyTitle}>No hay ubicaciones para mostrar</Text>
-        <Text style={styles.emptyText}>
-          Al crear o editar una averia, usa el buscador de Lugar para seleccionar una ubicacion real.
-        </Text>
+        <Text style={styles.emptyTitle}>{t('map_empty_title')}</Text>
+        <Text style={styles.emptyText}>{t('map_empty_body')}</Text>
       </View>
     );
   }
 
   return (
     <View style={styles.wrapper}>
+      <MapStatusFilter value={statusFilter} onChange={setStatusFilter} />
       <View style={styles.legendRow}>
-        <Text style={styles.legendItem}>Verde: solucionada</Text>
-        <Text style={styles.legendItem}>Rojo: pendiente</Text>
+        <Text style={styles.legendItem}>{t('map_legend_solved')}</Text>
+        <Text style={styles.legendItem}>{t('map_legend_pending')}</Text>
         {missingLocationCount > 0 && (
-          <Text style={styles.legendMuted}>
-            {missingLocationCount} averia(s) sin coordenadas.
-          </Text>
+          <Text style={styles.legendMuted}>{t('map_missing', { count: missingLocationCount })}</Text>
         )}
+        {machineMarkers.length === 0 && <Text style={styles.legendMuted}>{t('map_empty_filter')}</Text>}
       </View>
 
       <MapContainerCompat center={mapCenter} zoom={6} style={styles.map}>
+        <FitBounds points={boundsPoints} />
         <TileLayerCompat
           attribution='&copy; OpenStreetMap contributors &copy; CARTO'
           url={isDark ? DARK_TILES : LIGHT_TILES}
@@ -146,7 +170,7 @@ export function AveriasMapView({ averias, onViewRecords }: AveriasMapViewProps) 
                 }}
               >
                 <TooltipCompat direction="top" offset={[0, -8]}>
-                  {`${group.markers.length} averías en este punto. Click para expandir.`}
+                  {t('map_group_tooltip', { count: group.markers.length })}
                 </TooltipCompat>
               </CircleMarkerCompat>
             );
@@ -181,17 +205,17 @@ export function AveriasMapView({ averias, onViewRecords }: AveriasMapViewProps) 
                 }}
               >
                 <TooltipCompat direction="top" offset={[0, -8]}>
-                  {`Nº Bastidor: ${marker.bastidor || 'Sin número'} | Intervenciones: ${marker.interventions}`}
+                  {`${t('map_vin')}: ${marker.bastidor || t('map_no_number')} | ${t('map_interventions')}: ${marker.interventions}`}
                 </TooltipCompat>
                 <Popup>
                   <div style={{ minWidth: 230 }}>
-                    <strong>Nº Bastidor:</strong> {marker.bastidor || 'Sin número'}
+                    <strong>{t('map_vin')}:</strong> {marker.bastidor || t('map_no_number')}
                     <br />
-                    <strong>Lugar:</strong> {marker.lugar || 'Sin lugar'}
+                    <strong>{t('map_place')}:</strong> {marker.lugar || t('map_no_place')}
                     <br />
-                    <strong>Intervenciones:</strong> {marker.interventions}
+                    <strong>{t('map_interventions')}:</strong> {marker.interventions}
                     <br />
-                    <strong>Estado:</strong> {marker.isSolved ? 'Hecha' : 'Pendiente'}
+                    <strong>{t('map_status')}:</strong> {marker.isSolved ? t('map_status_done') : t('map_status_pending')}
                     <br />
                     <button
                       type="button"
@@ -207,7 +231,7 @@ export function AveriasMapView({ averias, onViewRecords }: AveriasMapViewProps) 
                         onViewRecords(marker.bastidor);
                       }}
                     >
-                      Ver registros
+                      {t('map_view_records')}
                     </button>
                   </div>
                 </Popup>
