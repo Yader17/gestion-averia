@@ -20,7 +20,7 @@ type Props = {
   dateSortOrder: DateSortOrder;
   onDateSortOrderChange: (order: DateSortOrder) => void;
   onEditAveria: (averia: Averia) => void;
-  onDeleteAveria: (id: string) => void;
+  onDeleteAveria?: (id: string) => void;
   onGenerateReport: (averia: Averia) => void;
 };
 

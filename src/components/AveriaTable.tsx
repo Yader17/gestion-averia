@@ -5,11 +5,22 @@ import { TABLE_HEADERS } from '../constants/tableHeaders';
 import { FONT_SIZES, SPACING, TABLE_COLUMN_WIDTHS } from '../constants/theme';
 import { Palette } from '../theme/palettes';
 import { useTheme, useThemedStyles } from '../theme/ThemeContext';
+import { TranslationKey } from '../i18n';
+import { useI18n } from '../i18n/useI18n';
 
+const HEADER_KEYS: Record<string, TranslationKey> = {
+  fecha: 'col_date',
+  numeroBastidor: 'col_vin',
+  tipoAveria: 'col_type',
+  intervencion: 'col_intervention',
+  lugar: 'col_place',
+  observacion: 'col_notes',
+  solucionado: 'col_solved',
+};
 type AveriaTableProps = {
   averias: Averia[];
   onEditAveria: (averia: Averia) => void;
-  onDeleteAveria: (id: string) => void;
+  onDeleteAveria?: (id: string) => void;
   onGenerateReport: (averia: Averia) => void;
 };
 
@@ -26,6 +37,7 @@ const COLUMN_WIDTHS: Record<string, number> = {
 };
 
 const ACTIONS_WIDTH = 180;
+const TECH_WIDTH = 150;
 
 export function AveriaTable({
   averias,
@@ -34,18 +46,16 @@ export function AveriaTable({
   onGenerateReport,
 }: AveriaTableProps) {
   const { colors: COLORS } = useTheme();
+  const { t } = useI18n();
   const styles = useThemedStyles(createStyles);
   const totalWidth =
     Object.values(COLUMN_WIDTHS).reduce((sum, width) => sum + width, 0) +
-    ACTIONS_WIDTH;
+    ACTIONS_WIDTH + TECH_WIDTH;
 
   if (averias.length === 0) {
     return (
       <View style={styles.emptyContainer}>
-        <Text style={styles.emptyText}>No hay averías registradas.</Text>
-        <Text style={styles.emptySubtext}>
-          Carga un archivo Excel o agrega una nueva avería.
-        </Text>
+        <Text style={styles.emptyText}>{t('faults_empty')}</Text>
       </View>
     );
   }
@@ -60,12 +70,15 @@ export function AveriaTable({
               style={[styles.headerCell, { width: COLUMN_WIDTHS[header.key] }]}
             >
               <Text style={styles.headerText} numberOfLines={1}>
-                {header.label}
+                {HEADER_KEYS[header.key] ? t(HEADER_KEYS[header.key]) : header.label}
               </Text>
             </View>
           ))}
+          <View style={[styles.headerCell, { width: TECH_WIDTH }]}>
+            <Text style={styles.headerText} numberOfLines={1}>{t('faults_technician')}</Text>
+          </View>
           <View style={[styles.headerCell, { width: ACTIONS_WIDTH }]}>
-            <Text style={styles.headerText}>Acciones</Text>
+            <Text style={styles.headerText}>{t('col_actions')}</Text>
           </View>
         </View>
 
@@ -98,7 +111,7 @@ export function AveriaTable({
                       ]}
                     >
                       <Text style={styles.solucionadoText}>
-                        {averia.solucionado ? 'SI' : 'NO'}
+                        {averia.solucionado ? t('col_yes') : t('col_no')}
                       </Text>
                     </View>
                   ) : (
@@ -108,6 +121,12 @@ export function AveriaTable({
                   )}
                 </View>
               ))}
+
+              <View style={[styles.dataCell, { width: TECH_WIDTH }]}>
+                <Text style={styles.dataText} numberOfLines={2}>
+                  {averia.creadoPorNombre ?? '—'}
+                </Text>
+              </View>
 
               <View style={[styles.dataCell, { width: ACTIONS_WIDTH }]}>
                 <View style={styles.actionButtons}>
@@ -123,12 +142,14 @@ export function AveriaTable({
                   >
                     <Text style={styles.actionButtonText}>✏️</Text>
                   </Pressable>
-                  <Pressable
-                    style={styles.deleteButton}
-                    onPress={() => onDeleteAveria(averia.id)}
-                  >
-                    <Text style={styles.actionButtonText}>🗑️</Text>
-                  </Pressable>
+                  {onDeleteAveria ? (
+                    <Pressable
+                      style={styles.deleteButton}
+                      onPress={() => onDeleteAveria(averia.id)}
+                    >
+                      <Text style={styles.actionButtonText}>🗑️</Text>
+                    </Pressable>
+                  ) : null}
                 </View>
               </View>
             </View>

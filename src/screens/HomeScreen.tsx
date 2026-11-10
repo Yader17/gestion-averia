@@ -221,8 +221,8 @@ export function HomeScreen({ onReady }: { onReady?: () => void }) {
         }
       };
 
-      if (!canWrite) {
-        showAlert('Sin permisos', 'Tu rol es de solo consulta.');
+      if (!isAdmin) {
+        showAlert('Sin permisos', 'Solo un administrador puede eliminar averías.');
         return;
       }
 
@@ -247,7 +247,7 @@ export function HomeScreen({ onReady }: { onReady?: () => void }) {
         );
       }
     },
-    [averias, deleteAveria, canWrite]
+    [averias, deleteAveria, isAdmin]
   );
 
   const handleFormSubmit = useCallback(
@@ -554,7 +554,7 @@ export function HomeScreen({ onReady }: { onReady?: () => void }) {
           dateSortOrder={dateSortOrder}
           onDateSortOrderChange={setDateSortOrder}
           onEditAveria={handleEditAveria}
-          onDeleteAveria={handleDeleteAveria}
+          onDeleteAveria={isAdmin ? handleDeleteAveria : undefined}
           onGenerateReport={handleGenerateReport}
         />
       );

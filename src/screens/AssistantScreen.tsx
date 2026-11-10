@@ -59,7 +59,7 @@ export function AssistantScreen({ averias, onOpenAveria }: Props) {
     if (!q) return;
     setLoading(true);
     try {
-      const result = await askAssistant(q, { status }, language);
+      const result = await askAssistant(q, { status }, language === 'it' ? 'en' : language);
       setServerResult(result);
     } catch (e) {
       setError(describeApiError(e));

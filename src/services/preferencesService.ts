@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
-export type Language = 'es' | 'en';
+export type Language = 'es' | 'en' | 'it';
 
 export type Preferences = {
   themeMode: ThemeMode;
@@ -26,7 +26,7 @@ export function sanitizePreferences(raw: unknown): Preferences {
       value.themeMode === 'light' || value.themeMode === 'dark' || value.themeMode === 'system'
         ? value.themeMode
         : DEFAULT_PREFERENCES.themeMode,
-    language: value.language === 'es' || value.language === 'en' ? value.language : null,
+    language: value.language === 'es' || value.language === 'en' || value.language === 'it' ? value.language : null,
     reduceMotion: value.reduceMotion === true,
     onboardingDone: value.onboardingDone === true,
   };

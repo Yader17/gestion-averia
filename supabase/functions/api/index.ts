@@ -281,7 +281,7 @@ async function actionAveriasUpdate(a: Actor, p: Params) {
 }
 
 async function actionAveriasDelete(a: Actor, p: Params) {
-  requireWriter(a);
+  requireAdmin(a);
   const id = str(p.id, 100);
   const { data: current } = await db.from('averias').select('*').eq('id', id).maybeSingle();
   if (!current) return { ok: true };

@@ -1,11 +1,12 @@
 import { es } from './es';
 import { en } from './en';
+import { it } from './it';
 import type { Language } from '../services/preferencesService';
 
 export type TranslationKey = keyof typeof es;
 export type Dictionary = Record<TranslationKey, string>;
 
-export const dictionaries: Record<Language, Dictionary> = { es, en };
+export const dictionaries: Record<Language, Dictionary> = { es, en, it };
 
 export function translate(
   language: Language,
@@ -20,5 +21,8 @@ export function translate(
 }
 
 export function detectDeviceLanguage(locale: string | undefined | null): Language {
-  return locale?.toLowerCase().startsWith('en') ? 'en' : 'es';
+  const l = locale?.toLowerCase() ?? '';
+  if (l.startsWith('en')) return 'en';
+  if (l.startsWith('it')) return 'it';
+  return 'es';
 }

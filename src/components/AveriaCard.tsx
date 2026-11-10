@@ -59,6 +59,11 @@ export function AveriaCard({ averia, onPress, onReport, onDelete, children, comp
               {averia.fecha} · {averia.tipoAveria}
               {averia.intervencion ? ` · ${averia.intervencion}` : ''}
             </Text>
+            {averia.creadoPorNombre ? (
+              <Text style={styles.meta} numberOfLines={1}>
+                {t('faults_registered_by', { name: averia.creadoPorNombre })}
+              </Text>
+            ) : null}
           </View>
           <StatusBadge solved={averia.solucionado} />
         </View>

@@ -92,6 +92,7 @@ export function SettingsScreen({ recordCount, onOpenAdmin }: Props) {
           options={[
             { value: 'es', label: t('lang_es') },
             { value: 'en', label: t('lang_en') },
+            { value: 'it', label: t('lang_it') },
           ]}
           value={language}
           onChange={setLanguage}
