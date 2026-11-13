@@ -6,6 +6,7 @@
 - **Servidor**: Supabase (Postgres + Storage + Edge Function `supabase/functions/api`). Es el almacén central; las tablas tienen RLS activada sin políticas, así que el cliente no accede a ellas directamente.
 - **Autenticación**: código personal por técnico (20 caracteres, 100 bits, generado en servidor). Solo se guarda un HMAC-SHA256 con *pepper*. Vigencia de 120 días, rotación automática y avisos a 14, 7 y 1 días.
 - **IA**: acción `ia.consultar` en el servidor. Recuperación (RAG) sobre las averías reales y llamada a Gemini desde el servidor. Proveedor intercambiable (`AiProvider` en `supabase/functions/_shared/ai.ts`).
+- **Documentación técnica**: biblioteca privada de PDF en Supabase Storage. Solo administradores cargan o eliminan; los tres roles autenticados pueden leer y consultar los manuales en la IA. La búsqueda es textual por página y las respuestas validan sus referencias contra las páginas recuperadas.
 - **Actualizaciones**: EAS Update (JavaScript por OTA). Los cambios nativos requieren un APK nuevo.
 
 ## Variables de entorno
@@ -52,6 +53,13 @@ select cron.schedule('rotar-codigos-acceso', '15 3 * * *', $job$
 
 7. Compilar el APK: `npx eas-cli build -p android --profile preview`.
 8. Publicar cambios de JavaScript: `npx eas-cli update --channel preview --message "..."`.
+
+## Biblioteca de documentación técnica
+
+- La migración aditiva `20261113000003_manuales_tecnicos.sql` crea las tablas de documentos y páginas, el índice textual y el bucket privado `manuales`. No modifica averías ni archivos existentes.
+- Solo se aceptan PDF de hasta 20 MB y 500 páginas. Se indexa texto seleccionable por página; los PDF escaneados requieren OCR y quedan marcados como no indexados.
+- Los documentos solo se operan mediante la Edge Function autenticada: todos los roles pueden listar/abrir manuales indexados; solo el administrador puede cargar, reintentar indexación o eliminar. Las URL de lectura son firmadas y caducan en 10 minutos.
+- La IA busca páginas con búsqueda de texto PostgreSQL y envía a Gemini solo las páginas recuperadas. Considera la confidencialidad de los manuales y las condiciones de uso del proveedor antes de subirlos.
 
 ## Migración de datos antiguos
 

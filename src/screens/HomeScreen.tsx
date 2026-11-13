@@ -29,6 +29,7 @@ import {
 import { callApi, describeApiError } from '../services/api/apiClient';
 import { useAuth } from '../auth/AuthContext';
 import { AdminScreen } from './AdminScreen';
+import { ManualLibraryScreen } from './ManualLibraryScreen';
 import {
   deleteAveriaPhotos,
   persistAveriaPhotos,
@@ -73,7 +74,7 @@ export function HomeScreen({ onReady }: { onReady?: () => void }) {
 
   const { canWrite, isAdmin, codigo } = useAuth();
   const [section, setSection] = useState<SectionKey>('home');
-  const [moreRoute, setMoreRoute] = useState<'menu' | 'kpis' | 'settings' | 'admin'>('menu');
+  const [moreRoute, setMoreRoute] = useState<'menu' | 'kpis' | 'settings' | 'admin' | 'manuals'>('menu');
   const { colors } = useTheme();
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
@@ -496,6 +497,9 @@ export function HomeScreen({ onReady }: { onReady?: () => void }) {
         case 'settings':
           setMoreRoute('settings');
           break;
+        case 'manuals':
+          setMoreRoute('manuals');
+          break;
         case 'templates':
           handleNewTemplate();
           break;
@@ -569,6 +573,8 @@ export function HomeScreen({ onReady }: { onReady?: () => void }) {
       content =
         moreRoute === 'kpis' ? (
           <KPIDashboard averias={averias} />
+        ) : moreRoute === 'manuals' ? (
+          <ManualLibraryScreen />
         ) : moreRoute === 'settings' ? (
           <SettingsScreen recordCount={averias.length} onOpenAdmin={() => setMoreRoute('admin')} />
         ) : moreRoute === 'admin' ? (

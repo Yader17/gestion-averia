@@ -33,6 +33,7 @@ import {
   type AiProvider,
   type FaultRecord,
   type Filters,
+  type ManualPage,
 } from '../_shared/ai.ts';
 
 const env = (k: string) => Deno.env.get(k) ?? '';
@@ -68,6 +69,10 @@ type Params = Record<string, unknown>;
 
 const str = (v: unknown, max = 500) => (typeof v === 'string' ? v.slice(0, max) : '');
 const dayMs = 86_400_000;
+const MANUAL_BUCKET = 'manuales';
+const MANUAL_MAX_FILE_BYTES = 20 * 1024 * 1024;
+const MANUAL_MAX_PAGES = 500;
+const MANUAL_MAX_TEXT_CHARS = 4_000_000;
 
 function timingSafeEqual(a: string, b: string) {
   if (a.length !== b.length) return false;
@@ -304,6 +309,161 @@ async function actionPhotoUploadUrl(a: Actor, p: Params) {
   const { data, error } = await db.storage.from('fotos').createSignedUploadUrl(path);
   if (error || !data) throw new HttpError(500, 'storage', 'No se pudo preparar la subida de la foto');
   return { path, signedUrl: data.signedUrl, token: data.token };
+}
+
+async function actionManualPrepare(a: Actor, p: Params) {
+  requireAdmin(a);
+  const titulo = str(p.titulo, 160).trim();
+  const equipo = str(p.equipo, 160).trim();
+  const nombreArchivo = str(p.nombreArchivo, 255).replace(/[\\/\u0000-\u001f]/g, '_').trim();
+  const tamanoBytes = Number(p.tamanoBytes);
+  if (!titulo) throw new HttpError(400, 'bad_request', 'Indica el título del manual');
+  if (!nombreArchivo.toLowerCase().endsWith('.pdf')) throw new HttpError(400, 'bad_request', 'Solo se admiten archivos PDF');
+  if (!Number.isSafeInteger(tamanoBytes) || tamanoBytes < 8 || tamanoBytes > MANUAL_MAX_FILE_BYTES) {
+    throw new HttpError(400, 'bad_request', 'El PDF debe pesar como máximo 20 MB');
+  }
+
+  const id = crypto.randomUUID();
+  const rutaStorage = `${id}/${id}.pdf`;
+  const { error: insertError } = await db.from('manuales_tecnicos').insert({
+    id,
+    titulo,
+    equipo,
+    nombre_archivo: nombreArchivo,
+    ruta_storage: rutaStorage,
+    tamano_bytes: tamanoBytes,
+    subido_por: a.id,
+    subido_por_nombre: a.nombre,
+  });
+  if (insertError) throw new HttpError(500, 'db', 'No se pudo registrar el manual');
+
+  const { data, error } = await db.storage.from(MANUAL_BUCKET).createSignedUploadUrl(rutaStorage);
+  if (error || !data) {
+    await db.from('manuales_tecnicos').delete().eq('id', id);
+    throw new HttpError(500, 'storage', 'No se pudo preparar la subida del manual');
+  }
+  await audit(a, 'manual.preparar', id, { titulo, nombreArchivo, tamanoBytes });
+  return { id, path: rutaStorage, signedUrl: data.signedUrl };
+}
+
+async function actionManualIndex(a: Actor, p: Params) {
+  requireAdmin(a);
+  const id = str(p.id, 50);
+  const { data: manual, error: manualError } = await db
+    .from('manuales_tecnicos')
+    .select('id, titulo, equipo, ruta_storage, tamano_bytes, estado')
+    .eq('id', id)
+    .maybeSingle();
+  if (manualError) throw new HttpError(500, 'db', 'No se pudo leer el manual');
+  if (!manual) throw new HttpError(404, 'not_found', 'Manual no encontrado');
+
+  try {
+    const { data: file, error: downloadError } = await db.storage.from(MANUAL_BUCKET).download(manual.ruta_storage);
+    if (downloadError || !file) throw new HttpError(422, 'manual_file_missing', 'No se pudo descargar el PDF; vuelve a subirlo');
+    if (file.size !== manual.tamano_bytes || file.size > MANUAL_MAX_FILE_BYTES) {
+      throw new HttpError(422, 'manual_size', 'El tamaño del archivo no coincide o supera el límite permitido');
+    }
+
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const signature = new TextDecoder().decode(bytes.slice(0, 5));
+    if (signature !== '%PDF-') throw new HttpError(422, 'manual_invalid_pdf', 'El archivo no es un PDF válido');
+
+    const { extractText, getDocumentProxy } = await import('npm:unpdf@0.10.0');
+    const pdf = await getDocumentProxy(bytes, { maxImageSize: 16_777_216 });
+    try {
+      if (pdf.numPages < 1 || pdf.numPages > MANUAL_MAX_PAGES) {
+        throw new HttpError(422, 'manual_page_limit', `El PDF debe tener como máximo ${MANUAL_MAX_PAGES} páginas`);
+      }
+      const { totalPages, text } = await extractText(pdf, { mergePages: false });
+      const pageTexts = (Array.isArray(text) ? text : [text]).map((page) =>
+        page.replace(/\u0000/g, '').trim()
+      );
+      const totalTextLength = pageTexts.reduce((total, page) => total + page.length, 0);
+      if (totalPages !== pdf.numPages || totalTextLength > MANUAL_MAX_TEXT_CHARS) {
+        throw new HttpError(422, 'manual_text_limit', 'El texto extraído supera el límite de procesamiento');
+      }
+      if (totalTextLength < 80) {
+        throw new HttpError(422, 'manual_no_text', 'No se encontró texto seleccionable. Los PDF escaneados requieren OCR y aún no se pueden indexar.');
+      }
+
+      const { error: clearError } = await db.from('manuales_tecnicos_paginas').delete().eq('manual_id', id);
+      if (clearError) throw new HttpError(500, 'db', 'No se pudieron preparar las páginas del manual');
+      const rows = pageTexts.flatMap((contenido, index) =>
+        contenido ? [{
+          manual_id: id,
+          pagina: index + 1,
+          contenido: `${manual.titulo} ${manual.equipo}\n${contenido}`.slice(0, 20_000),
+        }] : []
+      );
+      for (let i = 0; i < rows.length; i += 50) {
+        const { error: pageError } = await db.from('manuales_tecnicos_paginas').insert(rows.slice(i, i + 50));
+        if (pageError) throw new HttpError(500, 'db', 'No se pudieron guardar las páginas extraídas');
+      }
+      const { error: updateError } = await db.from('manuales_tecnicos').update({
+        estado: 'listo',
+        paginas: totalPages,
+        error_indexacion: null,
+        indexado_en: new Date().toISOString(),
+      }).eq('id', id);
+      if (updateError) throw new HttpError(500, 'db', 'No se pudo finalizar la indexación del manual');
+      await audit(a, 'manual.indexar', id, { paginas: totalPages, caracteres: totalTextLength });
+      return { ok: true, paginas: totalPages };
+    } finally {
+      await pdf.destroy();
+    }
+  } catch (error) {
+    const message = error instanceof HttpError
+      ? error.message
+      : 'No se pudo extraer el texto del PDF. Comprueba que sea un archivo válido y vuelve a intentarlo.';
+    const { error: stateError } = await db.from('manuales_tecnicos')
+      .update({ estado: 'error', error_indexacion: message })
+      .eq('id', id);
+    if (stateError) console.error('manual-index-state', stateError.message);
+    if (!(error instanceof HttpError)) console.error('manual-index', error);
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(422, 'manual_index', message);
+  }
+}
+
+async function actionManualList(a: Actor) {
+  let query = db.from('manuales_tecnicos')
+    .select('id, titulo, equipo, nombre_archivo, tamano_bytes, estado, paginas, error_indexacion, subido_por_nombre, creado_en, indexado_en')
+    .order('creado_en', { ascending: false })
+    .limit(200);
+  if (!isAdmin(a.rol)) query = query.eq('estado', 'listo');
+  const { data, error } = await query;
+  if (error) throw new HttpError(500, 'db', 'No se pudo cargar la biblioteca de manuales');
+  return { manuales: data ?? [] };
+}
+
+async function actionManualOpen(p: Params) {
+  const id = str(p.id, 50);
+  const { data: manual, error: manualError } = await db.from('manuales_tecnicos')
+    .select('ruta_storage, estado')
+    .eq('id', id)
+    .maybeSingle();
+  if (manualError) throw new HttpError(500, 'db', 'No se pudo localizar el manual');
+  if (!manual || manual.estado !== 'listo') throw new HttpError(404, 'not_found', 'Manual no encontrado');
+  const { data, error } = await db.storage.from(MANUAL_BUCKET).createSignedUrl(manual.ruta_storage, 600);
+  if (error || !data) throw new HttpError(500, 'storage', 'No se pudo abrir el manual');
+  return { url: data.signedUrl };
+}
+
+async function actionManualDelete(a: Actor, p: Params) {
+  requireAdmin(a);
+  const id = str(p.id, 50);
+  const { data: manual, error: readError } = await db.from('manuales_tecnicos')
+    .select('ruta_storage, titulo, nombre_archivo')
+    .eq('id', id)
+    .maybeSingle();
+  if (readError) throw new HttpError(500, 'db', 'No se pudo localizar el manual');
+  if (!manual) return { ok: true };
+  const { error: storageError } = await db.storage.from(MANUAL_BUCKET).remove([manual.ruta_storage]);
+  if (storageError) throw new HttpError(500, 'storage', 'No se pudo eliminar el archivo; no se borró su ficha');
+  const { error: deleteError } = await db.from('manuales_tecnicos').delete().eq('id', id);
+  if (deleteError) throw new HttpError(500, 'db', 'Se eliminó el archivo, pero no se pudo borrar su ficha. Contacta al administrador.');
+  await audit(a, 'manual.eliminar', id, { titulo: manual.titulo, nombreArchivo: manual.nombre_archivo });
+  return { ok: true };
 }
 
 async function actionTypesGet() {
@@ -607,6 +767,24 @@ async function actionAiAsk(a: Actor, p: Params) {
   if (error) throw new HttpError(500, 'db', 'No se pudo leer el historial');
   const records = (data ?? []) as FaultRecord[];
   const matches = searchRecords(records, question, filters, 8);
+  const { data: manualRows, error: manualSearchError } = await db.rpc('buscar_paginas_manuales', {
+    p_consulta: question,
+    p_limite: 8,
+  });
+  if (manualSearchError) throw new HttpError(500, 'db', 'No se pudo buscar en los manuales técnicos');
+  const manualPages = (manualRows ?? []).map((row: {
+    manual_id: string;
+    titulo: string;
+    equipo: string;
+    pagina: number;
+    contenido: string;
+  }) => ({
+    manualId: row.manual_id,
+    titulo: row.titulo,
+    equipo: row.equipo,
+    pagina: row.pagina,
+    contenido: row.contenido,
+  })) as ManualPage[];
   const related = matches.map((m) => ({
     id: m.record.id,
     fecha: m.record.fecha,
@@ -617,7 +795,14 @@ async function actionAiAsk(a: Actor, p: Params) {
     solucionado: m.record.solucionado,
     motivo: matchReason(m, lang),
   }));
-  const base = { relacionadas: related, matchedCount: related.length };
+  const manualesEncontrados = manualPages.map(({ manualId, titulo, equipo, pagina, contenido }) => ({
+    manualId,
+    titulo,
+    equipo,
+    pagina,
+    extracto: contenido.slice(0, 360),
+  }));
+  const base = { relacionadas: related, matchedCount: related.length, manualesEncontrados };
 
   // Límites por usuario y globales (se cuentan los intentos, también los que fallen en el proveedor).
   const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
@@ -634,8 +819,8 @@ async function actionAiAsk(a: Actor, p: Params) {
   const filteredStats = faultStats(records.filter((r) => passesFilters(r, filters)));
   const provider = aiProvider();
   try {
-    const raw = await provider.generateJson(SYSTEM_INSTRUCTION, buildUserPrompt(question, matches, filteredStats));
-    const respuesta = validateAnswer(raw, matches.map((m) => m.record));
+    const raw = await provider.generateJson(SYSTEM_INSTRUCTION, buildUserPrompt(question, matches, filteredStats, manualPages));
+    const respuesta = validateAnswer(raw, matches.map((m) => m.record), manualPages);
     return { ...base, estadisticas: filteredStats, ia: { estado: 'ok', proveedor: provider.name }, respuesta };
   } catch (e) {
     if (e instanceof AiError) {
@@ -680,6 +865,8 @@ Deno.serve(async (req) => {
       case 'averias.history': return json(200, await actionAveriasHistory(a, p));
       case 'averias.import': return json(200, await actionAveriasImport(a, p));
       case 'fotos.subir': return json(200, await actionPhotoUploadUrl(a, p));
+      case 'manuales.list': return json(200, await actionManualList(a));
+      case 'manuales.abrir': return json(200, await actionManualOpen(p));
       case 'ia.consultar': return json(200, await actionAiAsk(a, p));
       case 'tipos.get': return json(200, await actionTypesGet());
       case 'tipos.set': return json(200, await actionTypesSet(a, p));
@@ -687,6 +874,9 @@ Deno.serve(async (req) => {
     requireAdmin(a);
     switch (action) {
       case 'averias.vaciar': return json(200, await actionAveriasClear(a, p));
+      case 'manuales.preparar': return json(200, await actionManualPrepare(a, p));
+      case 'manuales.indexar': return json(200, await actionManualIndex(a, p));
+      case 'manuales.eliminar': return json(200, await actionManualDelete(a, p));
       case 'tecnicos.list': return json(200, await actionTecnicosList());
       case 'tecnicos.create': return json(200, await actionTecnicoCreate(a, p));
       case 'tecnicos.update': return json(200, await actionTecnicoUpdate(a, p));

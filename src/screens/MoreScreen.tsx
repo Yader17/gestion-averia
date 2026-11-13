@@ -7,7 +7,7 @@ import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 import { useI18n } from '../i18n/useI18n';
 import type { TranslationKey } from '../i18n';
 
-export type MoreAction = 'kpis' | 'templates' | 'import' | 'export' | 'settings';
+export type MoreAction = 'kpis' | 'templates' | 'import' | 'export' | 'settings' | 'manuals';
 
 type Props = {
   onAction: (action: MoreAction) => void;
@@ -32,6 +32,7 @@ const GROUPS: Group[] = [
   {
     title: 'more_group_data',
     entries: [
+      { action: 'manuals', icon: 'library-outline', title: 'more_manuals', desc: 'more_manuals_desc' },
       { action: 'import', icon: 'cloud-upload-outline', title: 'more_import', desc: 'more_import_desc' },
       { action: 'export', icon: 'cloud-download-outline', title: 'more_export', desc: 'more_export_desc' },
       { action: 'templates', icon: 'document-outline', title: 'more_templates', desc: 'more_templates_desc', destructive: true },

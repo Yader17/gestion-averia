@@ -25,6 +25,14 @@ export type RelatedFault = {
   motivo: string;
 };
 
+export type ManualPageHit = {
+  manualId: string;
+  titulo: string;
+  equipo: string;
+  pagina: number;
+  extracto: string;
+};
+
 export type AiAnswer = {
   resumen: string;
   suficientes: boolean;
@@ -32,11 +40,13 @@ export type AiAnswer = {
   causas: { texto: string; tipo: 'documentada' | 'hipotesis'; fuentes: string[] }[];
   comprobaciones: { texto: string; tipo: 'documentada' | 'hipotesis' | 'general'; fuentes: string[] }[];
   solucionesPrevias: { texto: string; fuente: string }[];
+  fuentesManuales: { manualId: string; pagina: number }[];
 };
 
 export type AiAskResponse = {
   relacionadas: RelatedFault[];
   matchedCount: number;
+  manualesEncontrados: ManualPageHit[];
   ia: { estado: AiState; proveedor?: string; detalle?: string };
   estadisticas?: {
     total: number;

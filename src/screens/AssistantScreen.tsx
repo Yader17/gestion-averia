@@ -11,6 +11,7 @@ import { AveriaCard } from '../components/AveriaCard';
 import { RetrievalMatch, searchAverias } from '../services/ai/retrieval';
 import { askAssistant, type AiAskResponse } from '../services/api/assistantApi';
 import { describeApiError } from '../services/api/apiClient';
+import { openTechnicalManual } from '../services/api/manualesApi';
 
 type Props = {
   averias: Averia[];
@@ -71,6 +72,19 @@ export function AssistantScreen({ averias, onOpenAveria }: Props) {
   const serverStructured = !!serverResult?.respuesta;
   const fallbackActive = submitted.length > 0 && !loading && (!serverStructured || !!error);
   const relatedCards = serverResult?.relacionadas ?? [];
+  const citedManualPages = serverResult?.respuesta?.fuentesManuales ?? [];
+  const citedPageKeys = new Set(citedManualPages.map((source) => `${source.manualId}:${source.pagina}`));
+  const manualsToShow = (serverResult?.manualesEncontrados ?? []).filter(
+    (source) => citedPageKeys.size === 0 || citedPageKeys.has(`${source.manualId}:${source.pagina}`)
+  );
+
+  const openManualPage = async (manualId: string, page: number) => {
+    try {
+      await openTechnicalManual(manualId, page);
+    } catch (e) {
+      setError(describeApiError(e));
+    }
+  };
 
   return (
     <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
@@ -188,6 +202,28 @@ export function AssistantScreen({ averias, onOpenAveria }: Props) {
               {localResults.length > 0 && <Text style={styles.muted}>{t('ai_resolved_first')}</Text>}
             </>
           )}
+
+          {manualsToShow.length > 0 ? (
+            <>
+              <Text style={styles.sectionTitle}>
+                {citedPageKeys.size > 0 ? t('ai_manual_sources') : t('ai_manual_matches')}
+              </Text>
+              {manualsToShow.map((manual) => (
+                <View key={`${manual.manualId}:${manual.pagina}`} style={styles.manualSource}>
+                  <Text style={styles.whyLabel}>{manual.titulo} · {t('manuals_page_number', { page: manual.pagina })}</Text>
+                  {manual.equipo ? <Text style={styles.muted}>{manual.equipo}</Text> : null}
+                  <Text style={styles.whyText}>{manual.extracto}</Text>
+                  <Pressable
+                    style={styles.viewButton}
+                    onPress={() => void openManualPage(manual.manualId, manual.pagina)}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.viewButtonText}>{t('ai_manual_open', { page: manual.pagina })}</Text>
+                  </Pressable>
+                </View>
+              ))}
+            </>
+          ) : null}
 
           {(serverStructured ? relatedCards.length > 0 : localResults.length > 0) ? (
             <>
@@ -314,6 +350,14 @@ const createStyles = (COLORS: Palette) =>
       backgroundColor: COLORS.surfaceAlt,
       padding: SPACING.md,
       gap: 2,
+    },
+    manualSource: {
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      backgroundColor: COLORS.surface,
+      borderRadius: 10,
+      padding: SPACING.md,
+      gap: SPACING.xs,
     },
     whyLabel: { fontSize: FONT_SIZES.sm, fontWeight: '700', color: COLORS.textSecondary, marginTop: 4 },
     whyText: { fontSize: FONT_SIZES.md, color: COLORS.text },
